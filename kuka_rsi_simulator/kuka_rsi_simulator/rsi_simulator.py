@@ -475,7 +475,7 @@ class RSISimulator(Node):
             self.socket_.sendto(msg, (self.rsi_ip_address_, self.rsi_port_address_))
             recv_msg, _ = self.socket_.recvfrom(1024)
             self.rsi_cmd_pub_.publish(String(data=recv_msg.decode("utf-8")))
-            self.get_logger().warn(f"msg: {recv_msg}")
+            self.get_logger().warning(f"msg: {recv_msg}")
             (
                 des_joint_correction_absolute,
                 des_joint_velocity,
@@ -487,8 +487,8 @@ class RSISimulator(Node):
             self.act_joint_vel = des_joint_velocity
             self.act_joint_torque = des_joint_torque
             if not self.ignore_ipoc_ and ipoc_recv != self.ipoc:
-                self.get_logger().warn("Packet is late")
-                self.get_logger().warn(f"sent ipoc: {self.ipoc}, received: {ipoc_recv}")
+                self.get_logger().warning("Packet is late")
+                self.get_logger().warning(f"sent ipoc: {self.ipoc}, received: {ipoc_recv}")
                 if self.ipoc != 0:
                     self.timeout_count += 1
             self.ipoc += 1
@@ -498,7 +498,7 @@ class RSISimulator(Node):
         except OSError:
             if self.ipoc != 0:
                 self.timeout_count += 1
-                self.get_logger().warn("Socket timed out")
+                self.get_logger().warning("Socket timed out")
 
     def on_shutdown(self):
         self.socket_.close()
