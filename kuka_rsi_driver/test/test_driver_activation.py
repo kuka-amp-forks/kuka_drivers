@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import unittest
+import os
+import sys
 
 import launch
 import launch_ros.actions
@@ -24,6 +25,9 @@ from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.launch_description_sources.python_launch_description_source import (
     PythonLaunchDescriptionSource,
 )
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from joint_move_test_case import JointMoveTestCase  # noqa: E402
 
 
 # Launch driver startup
@@ -69,13 +73,11 @@ def generate_test_description():
     )
 
 
-class TestDriverActivation(unittest.TestCase):
+class TestDriverActivation(JointMoveTestCase):
     def test_read_stdout(self, proc_output):
         # Check for successful initialization
         proc_output.assertWaitFor("Robot initialized", timeout=5)
-        proc_output.assertWaitFor(
-            "Successful initialization of hardware 'kr6_r700_2'", timeout=5
-        )
+        proc_output.assertWaitFor("Successful initialization of hardware 'kr6_r700_2'", timeout=5)
         # Check whether disabling automatic activation was successful
         proc_output.assertWaitFor(
             "Setting component 'kr6_r700_2' to 'unconfigured' state.", timeout=5
@@ -83,3 +85,6 @@ class TestDriverActivation(unittest.TestCase):
         # Check for successful configuration and activation
         proc_output.assertWaitFor("Successful 'configure' of hardware 'kr6_r700_2'", timeout=25)
         proc_output.assertWaitFor("Successful 'activate' of hardware 'kr6_r700_2'", timeout=30)
+
+        self._wait_for_controller_active("joint_trajectory_controller", timeout=20)
+        self.move_joint_and_wait()
