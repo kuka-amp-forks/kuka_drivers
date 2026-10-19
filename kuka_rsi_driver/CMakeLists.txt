@@ -35,6 +35,7 @@ add_library(
   src/hardware_interface_eki_rsi.cpp
   src/hardware_interface_rsi_only.cpp
   src/hardware_interface_mxa_rsi.cpp
+  src/mxa_status_fake.cpp
 )
 
 # Causes the visibility macros to use dllexport rather than dllimport,
