@@ -19,13 +19,13 @@ permissions:
   checks: write
 
 env:
-  # Keep these four in step with amp_robot's manipulator lyrical references.
+  # Keep in sync with amp_robot's manipulator lyrical references
   ROS_APT_SNAPSHOT_DATE: "2026-09-18"
   UBUNTU_CODENAME: resolute
   SDK_REPO: https://github.com/kuka-ros/kuka_external_control_sdk.git
   SDK_REF: d04412b161434aca9d107ad9058b8a6f41eca17f
   DESC_REPO: https://github.com/kuka-amp/kuka_robot_descriptions.git
-  DESC_REF: amp/lyrical
+  DESC_REF: d8b41feab96dad453b188a4d192ab95736d473eb
   RMW_IMPLEMENTATION: rmw_zenoh_cpp
 
 jobs:
@@ -33,7 +33,6 @@ jobs:
     name: Build and test kuka_rsi_driver on Lyrical
     runs-on: ubuntu-latest
     container:
-      # Same ros:lyrical-ros-base digest as amp_robot's BASE_IMAGE.
       image: ros@sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806
     defaults:
       run:
@@ -51,10 +50,6 @@ jobs:
           echo "deb [trusted=yes] http://snapshots.ros.org/${ROS_DISTRO}/${ROS_APT_SNAPSHOT_DATE}/ubuntu ${UBUNTU_CODENAME} main" \
             > /etc/apt/sources.list.d/ros2-snapshot.list
           apt-get update -qq
-          # The base image predates the snapshot: bring its installed ros-* set onto the
-          # snapshot first, or packages installed below link against an older ABI
-          # (undefined has_buffer_fields_* symbols). Same step as amp_robot's
-          # manipulator/docker/Dockerfile; `--upgradable` skips packages the snapshot dropped.
           ros_pkgs=$(apt list --upgradable 2>/dev/null | grep -oP "^ros-${ROS_DISTRO}-[^/]+" || true)
           if [ -n "${ros_pkgs}" ]; then
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade \
@@ -69,7 +64,8 @@ jobs:
           set -euo pipefail
           git clone -q "${SDK_REPO}" ws/src/kuka_external_control_sdk
           git -C ws/src/kuka_external_control_sdk checkout -q "${SDK_REF}"
-          git clone -q --branch "${DESC_REF}" "${DESC_REPO}" ws/src/kuka_robot_descriptions
+          git clone -q "${DESC_REPO}" ws/src/kuka_robot_descriptions
+          git -C ws/src/kuka_robot_descriptions checkout -q "${DESC_REF}"
           for d in kuka_drivers kuka_external_control_sdk kuka_robot_descriptions; do
             echo "$d $(git -C ws/src/$d rev-parse --short HEAD)"
           done
@@ -80,14 +76,12 @@ jobs:
           rosdep init 2>/dev/null || true
           rosdep update --rosdistro "${ROS_DISTRO}"
           rosdep install --from-paths ws/src --ignore-src -y --rosdistro "${ROS_DISTRO}"
-          # Snapshot rows carry a build stamp; record what the job actually built against.
           dpkg-query -W -f='${Package} ${Version}\n' \
             ros-${ROS_DISTRO}-controller-manager ros-${ROS_DISTRO}-hardware-interface \
             ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-rmw-zenoh-cpp
 
       - name: colcon build
         run: |
-          # The ROS setup files read variables they do not define, so no nounset here.
           set -eo pipefail +u
           source "/opt/ros/${ROS_DISTRO}/setup.bash"
           cd ws
