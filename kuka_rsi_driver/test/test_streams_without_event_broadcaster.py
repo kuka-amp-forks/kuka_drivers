@@ -15,19 +15,16 @@
 """The hardware component follows a trajectory with no kroshu controller loaded."""
 
 import os
-import time
+import sys
 import unittest
 
 import launch
 import launch_ros.actions
 import launch_testing.actions
+import launch_testing.asserts
 import launch_testing.markers
 import pytest
-import rclpy
-from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
-from builtin_interfaces.msg import Duration
-from control_msgs.action import FollowJointTrajectory
 from controller_manager_msgs.srv import (
     ListHardwareInterfaces,
     SetHardwareComponentState,
@@ -37,17 +34,13 @@ from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
 from lifecycle_msgs.msg import State
-from rclpy.action import ActionClient
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool
-from trajectory_msgs.msg import JointTrajectoryPoint
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from joint_move_test_case import JointMoveTestCase  # noqa: E402
 
 COMPONENT = "kr6_r700_2"
-JOINTS = [f"joint_{i}" for i in range(1, 7)]
-MOVED_JOINT = "joint_1"
-MOVE_RAD = 0.1
-TOLERANCE_RAD = 1e-3
 
 
 def _config(name):
@@ -134,52 +127,7 @@ def generate_test_description():
     )
 
 
-class TestStreamsWithoutEventBroadcaster(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        rclpy.init()
-
-    @classmethod
-    def tearDownClass(cls):
-        rclpy.shutdown()
-
-    def setUp(self):
-        self.node = rclpy.create_node("streams_without_event_broadcaster_test")
-        self.positions = {}
-        self.node.create_subscription(JointState, "/joint_states", self._on_joint_states, 10)
-
-    def tearDown(self):
-        self.node.destroy_node()
-
-    def _on_joint_states(self, msg):
-        self.positions.update(zip(msg.name, msg.position))
-
-    def _spin_for(self, seconds):
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
-            rclpy.spin_once(self.node, timeout_sec=0.05)
-
-    def _spin_until(self, condition, timeout):
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
-            if condition():
-                return True
-            rclpy.spin_once(self.node, timeout_sec=0.05)
-        return condition()
-
-    def _call(self, srv_type, name, request, timeout):
-        client = self.node.create_client(srv_type, name)
-        self.assertTrue(client.wait_for_service(timeout_sec=timeout), name)
-        future = client.call_async(request)
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
-        self.assertIsNotNone(future.result(), f"{name} did not answer")
-        return future.result()
-
-    def _wait_future(self, future, timeout):
-        rclpy.spin_until_future_complete(self.node, future, timeout_sec=timeout)
-        self.assertTrue(future.done(), "action call timed out")
-        return future.result()
-
+class TestStreamsWithoutEventBroadcaster(JointMoveTestCase):
     def test_follows_trajectory_without_event_broadcaster(self, proc_output):
         proc_output.assertWaitFor(f"Successful 'configure' of hardware '{COMPONENT}'", timeout=30)
 
@@ -236,38 +184,13 @@ class TestStreamsWithoutEventBroadcaster(unittest.TestCase):
         )
         self.assertTrue(result.ok, "joint_trajectory_controller did not activate")
 
-        self.assertTrue(
-            self._spin_until(lambda: all(j in self.positions for j in JOINTS), timeout=10),
-            f"no joint_states for {JOINTS}",
-        )
-        start = [self.positions[j] for j in JOINTS]
-        target = list(start)
-        target[JOINTS.index(MOVED_JOINT)] += MOVE_RAD
+        self.move_joint_and_wait()
 
-        action = ActionClient(
-            self.node,
-            FollowJointTrajectory,
-            "/joint_trajectory_controller/follow_joint_trajectory",
-        )
-        self.assertTrue(action.wait_for_server(timeout_sec=20), "trajectory action not available")
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = JOINTS
-        goal.trajectory.points = [
-            JointTrajectoryPoint(positions=target, time_from_start=Duration(sec=1))
-        ]
-        handle = self._wait_future(action.send_goal_async(goal), timeout=10)
-        self.assertTrue(handle.accepted, "trajectory goal rejected")
 
-        reached = self._spin_until(
-            lambda: abs(self.positions[MOVED_JOINT] - target[JOINTS.index(MOVED_JOINT)])
-            < TOLERANCE_RAD,
-            timeout=15,
+@launch_testing.post_shutdown_test()
+class TestProcessExitCodes(unittest.TestCase):
+    def test_exit_codes(self, proc_info):
+        launch_testing.asserts.assertExitCodes(
+            proc_info,
+            allowable_exit_codes=[launch_testing.asserts.EXIT_OK],
         )
-        self.assertTrue(
-            reached,
-            f"{MOVED_JOINT} at {self.positions[MOVED_JOINT]:.4f}, "
-            f"target {target[JOINTS.index(MOVED_JOINT)]:.4f}",
-        )
-
-        outcome = self._wait_future(handle.get_result_async(), timeout=15)
-        self.assertEqual(outcome.status, GoalStatus.STATUS_SUCCEEDED)
