@@ -1,0 +1,116 @@
+name: Lyrical CI (amp/lyrical)
+run-name: Lyrical CI - ${{ github.event_name }}
+
+# Builds the RSI driver against the same Lyrical apt snapshot and dependency pins
+# amp_robot's manipulator uses then runs kuka_rsi_driver's launch tests
+# against kuka_rsi_simulator.
+
+on:
+  push:
+    branches:
+      - amp/lyrical
+  pull_request:
+    branches:
+      - amp/lyrical
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+env:
+  # Keep in sync with amp_robot's manipulator lyrical references
+  ROS_APT_SNAPSHOT_DATE: "2026-09-18"
+  UBUNTU_CODENAME: resolute
+  SDK_REPO: https://github.com/kuka-ros/kuka_external_control_sdk.git
+  SDK_REF: d04412b161434aca9d107ad9058b8a6f41eca17f
+  DESC_REPO: https://github.com/kuka-amp/kuka_robot_descriptions.git
+  DESC_REF: d8b41feab96dad453b188a4d192ab95736d473eb
+  RMW_IMPLEMENTATION: rmw_zenoh_cpp
+
+jobs:
+  build_test:
+    name: Build and test kuka_rsi_driver on Lyrical
+    runs-on: ubuntu-latest
+    container:
+      image: ros@sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out kuka_drivers
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: ws/src/kuka_drivers
+
+      - name: Pin apt to the ROS snapshot and install build tools
+        run: |
+          set -euo pipefail
+          rm -f /etc/apt/sources.list.d/ros2*.list /etc/apt/sources.list.d/ros2*.sources
+          echo "deb [trusted=yes] http://snapshots.ros.org/${ROS_DISTRO}/${ROS_APT_SNAPSHOT_DATE}/ubuntu ${UBUNTU_CODENAME} main" \
+            > /etc/apt/sources.list.d/ros2-snapshot.list
+          apt-get update -qq
+          ros_pkgs=$(apt list --upgradable 2>/dev/null | grep -oP "^ros-${ROS_DISTRO}-[^/]+" || true)
+          if [ -n "${ros_pkgs}" ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade \
+              -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold ${ros_pkgs}
+          fi
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            git python3-vcstool python3-colcon-common-extensions python3-rosdep \
+            ros-${ROS_DISTRO}-rmw-zenoh-cpp
+
+      - name: Fetch the SDK and the robot descriptions at their pins
+        run: |
+          set -euo pipefail
+          git clone -q "${SDK_REPO}" ws/src/kuka_external_control_sdk
+          git -C ws/src/kuka_external_control_sdk checkout -q "${SDK_REF}"
+          git clone -q "${DESC_REPO}" ws/src/kuka_robot_descriptions
+          git -C ws/src/kuka_robot_descriptions checkout -q "${DESC_REF}"
+          for d in kuka_drivers kuka_external_control_sdk kuka_robot_descriptions; do
+            echo "$d $(git -C ws/src/$d rev-parse --short HEAD)"
+          done
+
+      - name: rosdep
+        run: |
+          set -euo pipefail
+          rosdep init 2>/dev/null || true
+          rosdep update --rosdistro "${ROS_DISTRO}"
+          rosdep install --from-paths ws/src --ignore-src -y --rosdistro "${ROS_DISTRO}"
+          dpkg-query -W -f='${Package} ${Version}\n' \
+            ros-${ROS_DISTRO}-controller-manager ros-${ROS_DISTRO}-hardware-interface \
+            ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-rmw-zenoh-cpp
+
+      - name: colcon build
+        run: |
+          set -eo pipefail +u
+          source "/opt/ros/${ROS_DISTRO}/setup.bash"
+          cd ws
+          colcon build --merge-install --event-handlers console_cohesion+ \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+      - name: colcon test (kuka_rsi_driver, with a Zenoh router)
+        run: |
+          set -eo pipefail +u
+          source "/opt/ros/${ROS_DISTRO}/setup.bash"
+          cd ws
+          source install/setup.bash
+          # The launch tests publish and subscribe over rmw_zenoh; without a router
+          # nothing discovers anything and every test times out on robot_description.
+          ros2 run rmw_zenoh_cpp rmw_zenohd > zenohd.log 2>&1 &
+          sleep 3
+          colcon test --merge-install --packages-select kuka_rsi_driver \
+            --executor sequential --event-handlers console_cohesion+
+          results=$(colcon test-result --all --verbose)
+          printf '%s\n' "${results}"
+          colcon test-result --all
+          count=$(printf '%s\n' "${results}" | sed -n 's/^Summary: \([0-9][0-9]*\) tests\?,.*/\1/p')
+          echo "kuka_rsi_driver: colcon recorded ${count:-0} tests"
+          [ "${count:-0}" -ge 1 ]
+
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kuka_rsi_driver-test-results
+          path: ws/build/kuka_rsi_driver/test_results/**/*.xml
+          if-no-files-found: warn
