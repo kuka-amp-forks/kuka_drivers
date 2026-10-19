@@ -828,4 +828,30 @@ void KukaRSIHardwareInterfaceBase::ConfigureJoints(
   }
 }
 
+bool KukaRSIHardwareInterfaceBase::ReadConfigureTimeout()
+{
+  const auto it = info_.hardware_parameters.find("configure_timeout_ms");
+  if (it == info_.hardware_parameters.end())
+  {
+    configure_timeout_ = DEFAULT_CONFIGURE_TIMEOUT;
+    return true;
+  }
+  try
+  {
+    std::size_t parsed = 0;
+    const int64_t value = std::stoll(it->second, &parsed);
+    if (parsed == it->second.size() && value > 0)
+    {
+      configure_timeout_ = std::chrono::milliseconds(value);
+      return true;
+    }
+  }
+  catch (const std::exception &)
+  {
+  }
+  RCLCPP_ERROR(
+    logger_, "configure_timeout_ms must be a positive integer, got '%s'", it->second.c_str());
+  return false;
+}
+
 }  // namespace kuka_rsi_driver
