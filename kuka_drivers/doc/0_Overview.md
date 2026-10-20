@@ -202,18 +202,11 @@ Solution: To minimize the detached thread sleep time, the controller manager upd
 The async thread receives robot state 0.5 ms after `read` is triggered. Main-thread `update` starts 0.5 ms after the state is received on the async thread. One packet is 0.7 ms late.
 Issue: the late packet causes an extra `update` execution before `write`. Consequently, one set of commands produced by `update` is never transmitted via `write`. In the subsequent cycle, `write` sends stale data without an intervening `update`, potentially causing a robot jerk. (For example, in case of a simple motion with constant velocity interpolated, the first tick will produce double velocity, while the second a cycle with 0 velocity)
 ![alt text](resources/dual_arm_timing/scenario4.png)
-Solution: if `update` has not yet been called since last `write`, delay current `write` with a maximum of 1 ms. This is implemented using the internal interface `interpolation_count`
+Solution (upstream): if `update` has not yet been called since last `write`, delay current `write` with a maximum of 1 ms, paced through an internal `interpolation_count` interface. **Removed on this fork:** with one synchronous arm per controller manager there is no async lag to absorb, and the extra command interface tied the hardware component to `kuka_event_broadcaster`.
 
 #### Interpolation count - internal interface
 
-The iiQKA.OS2 driver exposes a `runtime_config/interpolation_count` command interface.
-
-- The `kuka_event_broadcaster` updates it once per controller update cycle (and resets it to avoid overflow)
-- Hardware interfaces use it as a sequencing check before `write()` to detect when controller updates and hardware writes are no longer progressing in the expected order.
-- For async hardware, the drivers tolerate a one-cycle asynchronous lag with a maximum 1 ms retry window, that can fix communication jitter up to 1 ms. If this condition is not met, or it is still unresolved after the retry window, a mismatch warning is reported.
-  - If tick with 0 `update` calls happens first, `write` is delayed so that `update` can be still called
-  - If tick with 2 `update` calls happens first, one `update` result will be lost, but all consequent ticks will wait for a new value
-
+Not present on this fork. The iiQKA.OS2 driver here exports no `runtime_config/interpolation_count` command interface and `kuka_event_broadcaster` claims no command interfaces; the broadcaster only publishes `server_state` changes.
 
 ## Detailed setup and startup instructions
 

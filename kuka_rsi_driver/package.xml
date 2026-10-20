@@ -33,6 +33,15 @@
   <exec_depend>python3-yaml</exec_depend>
 
   <test_depend>kuka_rsi_simulator</test_depend>
+  <test_depend>kuka_agilus_support</test_depend>
+  <test_depend>controller_manager_msgs</test_depend>
+  <test_depend>lifecycle_msgs</test_depend>
+  <test_depend>sensor_msgs</test_depend>
+  <test_depend>action_msgs</test_depend>
+  <test_depend>builtin_interfaces</test_depend>
+  <test_depend>control_msgs</test_depend>
+  <test_depend>trajectory_msgs</test_depend>
+  <test_depend>robot_state_publisher</test_depend>
   <test_depend>launch_ros</test_depend>
   <test_depend>launch_testing_ament_cmake</test_depend>
 

@@ -14,9 +14,7 @@
 
 #include "kuka_event_broadcaster/kuka_event_broadcaster.hpp"
 
-#include <algorithm>
 #include <exception>
-#include <limits>
 
 #include "kuka_drivers_core/hardware_event.hpp"
 #include "kuka_drivers_core/hardware_interface_types.hpp"
@@ -47,14 +45,7 @@ controller_interface::InterfaceConfiguration EventBroadcaster::command_interface
   const
 {
   controller_interface::InterfaceConfiguration config;
-  config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
-
-  for (const auto & robot_prefix : params_.robot_prefixes)
-  {
-    config.names.emplace_back(ComposeInterfaceName(
-      robot_prefix, hardware_interface::CONFIG_PREFIX, hardware_interface::INTERPOLATION_COUNT));
-  }
-
+  config.type = controller_interface::interface_configuration_type::NONE;
   return config;
 }
 
@@ -99,19 +90,14 @@ controller_interface::CallbackReturn EventBroadcaster::on_configure(const rclcpp
   }
 
   event_robot_prefixes_ = params_.robot_prefixes;
-  interpolation_count_ = 0;
 
   last_events_.assign(event_robot_prefixes_.size(), 0);
-  control_active_.assign(event_robot_prefixes_.size(), false);
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
 controller_interface::CallbackReturn EventBroadcaster::on_activate(const rclcpp_lifecycle::State &)
 {
-  // Reset control_active_ flags on re-activation
-  std::fill(control_active_.begin(), control_active_.end(), false);
-  interpolation_count_ = 0;
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -124,28 +110,11 @@ controller_interface::CallbackReturn EventBroadcaster::on_deactivate(
 controller_interface::return_type EventBroadcaster::update(
   const rclcpp::Time &, const rclcpp::Duration &)
 {
-  bool reset_interpolation_count = false;
-
-  // First, check for state changes and update control_active_ flags
+  // Publish every server_state change, one message per robot
   for (size_t i = 0; i < state_interfaces_.size(); ++i)
   {
     const auto current_event =
       static_cast<uint8_t>(state_interfaces_[i].get_optional().value_or(last_events_[i]));
-
-    // Track CONTROL_STARTED event
-    if (current_event == static_cast<uint8_t>(kuka_drivers_core::HardwareEvent::CONTROL_STARTED))
-    {
-      control_active_[i] = true;
-    }
-    // Reset on CONTROL_STOPPED or ERROR
-    else if (
-      current_event == static_cast<uint8_t>(kuka_drivers_core::HardwareEvent::CONTROL_STOPPED) ||
-      current_event == static_cast<uint8_t>(kuka_drivers_core::HardwareEvent::ERROR))
-    {
-      control_active_[i] = false;
-      interpolation_count_ = 0;
-      reset_interpolation_count = true;
-    }
 
     if (current_event != last_events_[i])
     {
@@ -156,44 +125,9 @@ controller_interface::return_type EventBroadcaster::update(
     }
   }
 
-  // Only increment and set interpolation_count when all hardware interfaces have started control
-  const bool all_control_started =
-    std::all_of(control_active_.begin(), control_active_.end(), [](bool v) { return v; });
-
-  if (all_control_started)
-  {
-    if (interpolation_count_ == std::numeric_limits<uint32_t>::max())
-    {
-      interpolation_count_ = 0;
-    }
-    else
-    {
-      ++interpolation_count_;
-    }
-  }
-  else if (!reset_interpolation_count)
-  {
-    return controller_interface::return_type::OK;
-  }
-
-  bool all_counts_set = true;
-  for (size_t idx = 0; idx < command_interfaces_.size(); ++idx)
-  {
-    const bool count_set =
-      command_interfaces_[idx].set_value(static_cast<double>(interpolation_count_));
-    all_counts_set = all_counts_set && count_set;
-    if (!count_set)
-    {
-      RCLCPP_WARN_THROTTLE(
-        get_node()->get_logger(), *get_node()->get_clock(), 5000,
-        "Failed to set interpolation_count command interface for robot '%s'",
-        event_robot_prefixes_[idx].c_str());
-    }
-  }
-
-  return all_counts_set ? controller_interface::return_type::OK
-                        : controller_interface::return_type::ERROR;
+  return controller_interface::return_type::OK;
 }
+
 }  // namespace kuka_controllers
 
 PLUGINLIB_EXPORT_CLASS(

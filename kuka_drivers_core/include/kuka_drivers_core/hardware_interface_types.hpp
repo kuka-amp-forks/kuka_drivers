@@ -41,7 +41,6 @@ static constexpr char STATE_PREFIX[] = "state";
 // Constant defining control_mode configuration interface
 static constexpr char CONTROL_MODE[] = "control_mode";
 // Constant defining interpolation count interface
-static constexpr char INTERPOLATION_COUNT[] = "interpolation_count";
 // Constant defining the receive multiplier interface needed for FRI
 static constexpr char RECEIVE_MULTIPLIER[] = "receive_multiplier";
 static constexpr char SEND_PERIOD[] = "send_period_ms";
