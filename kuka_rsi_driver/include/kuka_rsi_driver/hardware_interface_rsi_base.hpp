@@ -181,9 +181,7 @@ protected:
   static constexpr std::chrono::milliseconds DRIVES_POWERED_CHECK_INTERVAL{100};
   static constexpr int64_t READ_TIMEOUT_MS = 1'000;
 
-  // iiQKA.OS2 runs RSI at 4 ms only (its krc_setup offers no other cycle time), and joint
-  // position is the only control mode the driver supports, so both are fixed here rather than
-  // commanded through runtime_config interfaces.
+  // Fixed cycle time and control mode for this driver version.
   static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;
   static constexpr double RSI_CYCLE_TIME_MS = 4.0;
   static constexpr kuka::external::control::ControlMode CONTROL_MODE =
