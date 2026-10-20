@@ -23,7 +23,6 @@
 #include "kuka_drivers_core/hardware_interface_types.hpp"
 #include "kuka_rsi_driver/event_observers.hpp"
 #include "kuka_rsi_driver/hardware_interface_mxa_rsi.hpp"
-#include "kuka_rsi_driver/mxa_status_fake.hpp"
 
 namespace kuka_rsi_driver
 {
@@ -201,15 +200,6 @@ void KukaMxaRsiHardwareInterface::Read(const int64_t request_timeout)
 void KukaMxaRsiHardwareInterface::CreateRobotInstance(
   const kuka::external::control::kss::Configuration & config)
 {
-  const auto fake = info_.hardware_parameters.find("mxa_status_fake_port");
-  if (fake != info_.hardware_parameters.end())
-  {
-    RCLCPP_WARN(
-      logger_, "mxA status fake enabled on port %s, no mxA connection", fake->second.c_str());
-    robot_ptr_ = std::make_unique<MxaStatusFake>(
-      config, static_cast<uint16_t>(std::stoi(fake->second)), logger_);
-    return;
-  }
   robot_ptr_ = std::make_unique<kuka::external::control::kss::mxa::Robot>(config);
 }
 

@@ -25,7 +25,6 @@ import launch_testing.actions
 import launch_testing.asserts
 import launch_testing.markers
 import pytest
-import xacro
 from ament_index_python.packages import get_package_share_directory
 from controller_manager_msgs.srv import SetHardwareComponentState
 from launch.actions import IncludeLaunchDescription
@@ -36,45 +35,29 @@ from std_msgs.msg import Bool
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from joint_move_test_case import JointMoveTestCase  # noqa: E402
+from mxa_status_fake_support import (  # noqa: E402
+    COMPONENT,
+    FAKE_PORT,
+    OP_MODE_EXT,
+    OP_MODE_T1,
+    robot_description,
+)
 
-COMPONENT = "kr6_r700_2"
-FAKE_PORT = 59153
-OP_MODE_T1 = 1
-OP_MODE_EXT = 4
 # Cycles of read() at 250 Hz copy a delivered status into the state interfaces.
 SETTLE_S = 0.5
-
-
-def _robot_description():
-    urdf = xacro.process_file(
-        os.path.join(
-            get_package_share_directory("kuka_agilus_support"), "urdf", f"{COMPONENT}.urdf.xacro"
-        ),
-        mappings={
-            "driver_version": "mxa_rsi",
-            "client_ip": "0.0.0.0",
-            "client_port": "59152",
-            "controller_ip": "127.0.0.1",
-            "verify_robot_model": "true",
-            "roundtrip_time": "4000",
-        },
-    ).toxml()
-    anchor = '<param name="mxa_client_port">1337</param>'
-    assert anchor in urdf
-    return urdf.replace(anchor, anchor + f'<param name="mxa_status_fake_port">{FAKE_PORT}</param>')
 
 
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
 def generate_test_description():
-    robot_description = {"robot_description": _robot_description()}
+    description = {"robot_description": robot_description()}
 
     control_node = launch_ros.actions.Node(
         package="kuka_drivers_core",
         executable="control_node",
         output="screen",
         parameters=[
-            robot_description,
+            description,
             {
                 "update_rate": 250,
                 "hardware_components_initial_state": {"unconfigured": [COMPONENT]},
@@ -86,7 +69,7 @@ def generate_test_description():
         package="robot_state_publisher",
         executable="robot_state_publisher",
         output="screen",
-        parameters=[robot_description],
+        parameters=[description],
     )
 
     simulator = IncludeLaunchDescription(

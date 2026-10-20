@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef KUKA_RSI_DRIVER__MXA_STATUS_FAKE_HPP_
-#define KUKA_RSI_DRIVER__MXA_STATUS_FAKE_HPP_
+#ifndef KUKA_RSI_DRIVER__TEST_PLUGIN__MXA_STATUS_FAKE_HPP_
+#define KUKA_RSI_DRIVER__TEST_PLUGIN__MXA_STATUS_FAKE_HPP_
 
 #include <atomic>
 #include <chrono>
@@ -39,7 +39,7 @@ namespace kuka_rsi_driver
 //   "period_ms=<int>"    telegram cadence; 0 stops the cadence
 //   "stall" / "resume"   stop or restart delivery to the driver
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
-// Only reachable through the mxa_status_fake_port hardware parameter.
+// Built only for tests, behind KukaMxaRsiStatusFakeHardwareInterface.
 class MxaStatusFake : public kuka::external::control::kss::rsi::Robot
 {
 public:
@@ -91,4 +91,4 @@ private:
 
 }  // namespace kuka_rsi_driver
 
-#endif  // KUKA_RSI_DRIVER__MXA_STATUS_FAKE_HPP_
+#endif  // KUKA_RSI_DRIVER__TEST_PLUGIN__MXA_STATUS_FAKE_HPP_

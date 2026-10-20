@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "kuka_rsi_driver/mxa_status_fake.hpp"
+#include "mxa_status_fake.hpp"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
