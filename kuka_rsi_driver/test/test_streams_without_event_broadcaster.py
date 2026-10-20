@@ -186,6 +186,24 @@ class TestStreamsWithoutEventBroadcaster(JointMoveTestCase):
 
         self.move_joint_and_wait()
 
+        switch = SwitchController.Request()
+        switch.deactivate_controllers = ["joint_trajectory_controller"]
+        switch.strictness = SwitchController.Request.STRICT
+        result = self._call(
+            SwitchController, "/controller_manager/switch_controller", switch, timeout=20
+        )
+        self.assertTrue(result.ok, "joint_trajectory_controller did not deactivate")
+
+        request.target_state.id = State.PRIMARY_STATE_INACTIVE
+        request.target_state.label = "inactive"
+        result = self._call(
+            SetHardwareComponentState,
+            "/controller_manager/set_hardware_component_state",
+            request,
+            timeout=30,
+        )
+        self.assertTrue(result.ok, "set_hardware_component_state(inactive) refused")
+
 
 @launch_testing.post_shutdown_test()
 class TestProcessExitCodes(unittest.TestCase):
