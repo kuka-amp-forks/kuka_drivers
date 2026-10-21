@@ -238,6 +238,13 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
     RCLCPP_INFO(logger_, "mxA status fake: stream resumed");
     return true;
   }
+  if (token == "report")
+  {
+    RCLCPP_INFO(
+      logger_, "mxA status fake: rsi_running=%d cancel_pending=%d cancelled=%d drives_powered=%d",
+      rsi_running_ ? 1 : 0, cancel_pending_, cancelled_ ? 1 : 0, status_.drives_powered_ ? 1 : 0);
+    return true;
+  }
 
   const auto eq = token.find('=');
   if (eq == std::string::npos)
@@ -278,6 +285,10 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   else if (key == "cancel_cycles")
   {
     cancel_cycles_ = number;
+  }
+  else if (key == "drives_stuck")
+  {
+    drives_stuck_ = flag;
   }
   else if (key == "control_mode")
   {
@@ -326,6 +337,11 @@ void MxaStatusFake::SetDrivesPowered(bool powered)
 {
   {
     std::lock_guard<std::mutex> lk{mtx_};
+    if (drives_stuck_)
+    {
+      RCLCPP_INFO(logger_, "mxA status fake: drives %s request ignored", powered ? "on" : "off");
+      return;
+    }
     status_.drives_powered_ = powered;
   }
   Dispatch();
