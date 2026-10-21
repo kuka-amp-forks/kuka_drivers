@@ -83,6 +83,7 @@ if(BUILD_TESTING)
   add_launch_test(test/test_driver_activation.py)
   add_launch_test(test/test_driver_activation_dual_arm.py)
   add_launch_test(test/test_streams_without_event_broadcaster.py)
+  add_launch_test(test/test_loop_timing.py)
 endif()
 
 ## EXPORTS
