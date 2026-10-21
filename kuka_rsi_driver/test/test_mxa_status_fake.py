@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Injected mxA status drives the component's activation and read() checks, and can stall."""
+"""Injected mxA status gates activation of the mxA component, and a stalled stream withholds it."""
 
 import os
-import socket
 import sys
 import unittest
 
@@ -26,25 +25,19 @@ import launch_testing.asserts
 import launch_testing.markers
 import pytest
 from ament_index_python.packages import get_package_share_directory
-from controller_manager_msgs.srv import SetHardwareComponentState
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from lifecycle_msgs.msg import State
-from rclpy.qos import QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Bool
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from joint_move_test_case import JointMoveTestCase  # noqa: E402
 from mxa_status_fake_support import (  # noqa: E402
     COMPONENT,
-    FAKE_PORT,
     OP_MODE_EXT,
     OP_MODE_T1,
+    LogCursor,
+    MxaStatusFakeTestCase,
     robot_description,
 )
-
-# Cycles of read() at 250 Hz copy a delivered status into the state interfaces.
-SETTLE_S = 0.5
 
 
 @pytest.mark.launch_test
@@ -92,88 +85,53 @@ def generate_test_description():
     )
 
 
-class TestMxaStatusFake(JointMoveTestCase):
+class TestMxaStatusFake(MxaStatusFakeTestCase):
+    """Each test starts from a configured, inactive component in EXT with the drives off."""
+
     def setUp(self):
         super().setUp()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
+        self.publish_is_configured()
+        self.inject(
+            "resume emergency_stop=0 guard_stop=0 "
+            f"operation_mode={OP_MODE_EXT} drives_powered=0 motion_possible=1"
+        )
 
     def tearDown(self):
-        self.sock.close()
+        self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         super().tearDown()
 
-    def _inject(self, datagram):
-        self.sock.sendto(datagram.encode(), ("127.0.0.1", FAKE_PORT))
-        self._spin_for(SETTLE_S)
+    def test_estop_refuses_activation(self, proc_output):
+        log = LogCursor(proc_output)
+        self.inject("emergency_stop=1")
+        self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
+        self.assertTrue(log.wait_for("Emergency stop is active", timeout=5))
 
-    def _set_component_state(self, state_id, label):
-        request = SetHardwareComponentState.Request()
-        request.name = COMPONENT
-        request.target_state.id = state_id
-        request.target_state.label = label
-        result = self._call(
-            SetHardwareComponentState,
-            "/controller_manager/set_hardware_component_state",
-            request,
-            timeout=60,
-        )
-        return result.ok
+    def test_non_ext_refuses_activation(self, proc_output):
+        log = LogCursor(proc_output)
+        self.inject(f"operation_mode={OP_MODE_T1}")
+        self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
+        self.assertTrue(log.wait_for("KRC not in EXT", timeout=5))
 
-    def test_injected_status_drives_activation_and_read(self, proc_output):
-        proc_output.assertWaitFor(
-            f"Successful initialization of hardware '{COMPONENT}'", timeout=30
-        )
+    def test_stalled_stream_withholds_status(self, proc_output):
+        log = LogCursor(proc_output)
+        self.inject(f"operation_mode={OP_MODE_T1}")
+        self.inject("stall")
+        self.assertTrue(log.wait_for("mxA status fake: stream stalled", timeout=5))
+        self.inject(f"operation_mode={OP_MODE_EXT}")
+        self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
+        self.assertTrue(log.wait_for("KRC not in EXT", timeout=5))
 
-        # Configure completes without an mxA server.
-        self.assertTrue(self._set_component_state(State.PRIMARY_STATE_INACTIVE, "inactive"))
-        proc_output.assertWaitFor(f"mxA status fake listening on 127.0.0.1:{FAKE_PORT}", timeout=5)
-        proc_output.assertWaitFor(f"Successful 'configure' of hardware '{COMPONENT}'", timeout=30)
-
-        # control_node runs read() and write() only after robot_manager/is_configured is true.
-        is_configured = self.node.create_publisher(
-            Bool,
-            "/robot_manager/is_configured",
-            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
-        )
-        self.assertTrue(
-            self._spin_until(lambda: is_configured.get_subscription_count() > 0, timeout=10),
-            "control_node is not subscribed to /robot_manager/is_configured",
-        )
-        for _ in range(5):
-            is_configured.publish(Bool(data=True))
-            self._spin_for(0.1)
-
-        # E-stop refuses activation.
-        self._inject(
-            f"emergency_stop=1 operation_mode={OP_MODE_EXT} drives_powered=1 motion_possible=1"
-        )
-        self.assertFalse(self._set_component_state(State.PRIMARY_STATE_ACTIVE, "active"))
-        proc_output.assertWaitFor("Emergency stop is active", timeout=5)
-
-        # A non-EXT operation mode refuses activation.
-        self._inject(f"emergency_stop=0 operation_mode={OP_MODE_T1} drives_powered=0")
-        self.assertFalse(self._set_component_state(State.PRIMARY_STATE_ACTIVE, "active"))
-        proc_output.assertWaitFor("KRC not in EXT", timeout=5)
-
-        # A stalled stream withholds the EXT update, so activation stays refused.
-        self._inject("stall")
-        proc_output.assertWaitFor("mxA status fake: stream stalled", timeout=5)
-        self._inject(f"operation_mode={OP_MODE_EXT}")
-        self.assertFalse(self._set_component_state(State.PRIMARY_STATE_ACTIVE, "active"))
-
-        # Resuming delivers it; activation turns the drives on and starts RSI on the simulator.
-        self._inject("resume")
-        self.assertTrue(self._set_component_state(State.PRIMARY_STATE_ACTIVE, "active"))
-        proc_output.assertWaitFor("Drives successfully powered on", timeout=5)
-        proc_output.assertWaitFor(f"Successful 'activate' of hardware '{COMPONENT}'", timeout=30)
-
-        # While active, read() classifies each injected condition.
-        self._inject("motion_possible=0")
-        proc_output.assertWaitFor("Motion is not possible", timeout=5)
-        self._inject("motion_possible=1")
-
-        self._inject("emergency_stop=1")
-        proc_output.assertWaitFor("Emergency stop detected!", timeout=5)
-        self._inject("emergency_stop=0")
+    def test_resume_delivers_status_and_activates(self, proc_output):
+        log = LogCursor(proc_output)
+        self.inject(f"operation_mode={OP_MODE_T1}")
+        self.inject("stall")
+        self.inject(f"operation_mode={OP_MODE_EXT}")
+        self.inject("resume")
+        self.assertTrue(log.wait_for("mxA status fake: stream resumed", timeout=5))
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
+        self.assertTrue(log.wait_for("Drives successfully powered on", timeout=5))
+        self.assertTrue(log.wait_for(f"Successful 'activate' of hardware '{COMPONENT}'", 30))
 
 
 @launch_testing.post_shutdown_test()
