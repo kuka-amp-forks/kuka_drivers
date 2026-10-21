@@ -605,6 +605,9 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 {
   ResetDiagnostics();
 
+  // The status arrives on the mxA thread; read() may not have copied it yet.
+  control_state_.status_manager.UpdateStateInterfaces();
+
   if (control_state_.status_manager.IsEmergencyStopActive())
   {
     RCLCPP_ERROR(logger_, "Emergency stop is active. Cannot activate hardware interface.");
