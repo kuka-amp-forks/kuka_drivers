@@ -199,9 +199,7 @@ protected:
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_CHECK_INTERVAL{10};
 
-  // Bounds set by the *_timeout_ms hardware parameters: the wait for the controller's
-  // initialization report in on_configure, the drives-on wait and the first RSI packet in
-  // on_activate, and how long a stop may stay pending before it is settled.
+  // Timeouts from the *_timeout_ms hardware parameters.
   static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};
   static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{3'000};
   static constexpr std::chrono::milliseconds DEFAULT_FIRST_PACKET_TIMEOUT{5'000};
