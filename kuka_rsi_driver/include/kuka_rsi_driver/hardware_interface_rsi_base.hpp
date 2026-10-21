@@ -83,6 +83,9 @@ protected:
 
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
 
+  // Requests the RSI program cancel and drives-off without waiting, and marks the stop pending.
+  KUKA_RSI_DRIVER_LOCAL void RequestStop();
+
   // Polled from read() while a stop is pending.
   KUKA_RSI_DRIVER_LOCAL void CheckStopComplete();
 
@@ -105,8 +108,8 @@ protected:
   KUKA_RSI_DRIVER_LOCAL kuka::external::control::kss::GPIOConfiguration ParseGPIOConfig(
     const hardware_interface::InterfaceInfo & info);
 
-  // Reads configure_timeout_ms; false when it is set but not a positive integer.
-  KUKA_RSI_DRIVER_LOCAL bool ReadConfigureTimeout();
+  // Reads the *_timeout_ms hardware parameters; false when one is set but not a positive integer.
+  KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameters();
 
   struct InitSequenceReport
   {
@@ -156,6 +159,8 @@ protected:
     bool stop_pending = false;
     bool cancel_confirmed = false;
     uint64_t stop_pending_cycles = 0;
+    std::chrono::steady_clock::time_point stop_requested_time{};
+    bool stop_timeout_reported = false;
   };
 
   struct DiagnosticsState
@@ -187,7 +192,6 @@ protected:
 
   static constexpr std::chrono::milliseconds IDLE_SLEEP_DURATION{2};
   static constexpr std::chrono::milliseconds INIT_WAIT_DURATION{100};
-  static constexpr std::chrono::seconds DRIVES_POWERED_TIMEOUT{3};
   static constexpr std::chrono::milliseconds DRIVES_POWERED_CHECK_INTERVAL{100};
   static constexpr int64_t READ_TIMEOUT_MS = 1'000;
 
@@ -195,9 +199,17 @@ protected:
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_CHECK_INTERVAL{10};
 
-  // Bound on the wait for the controller's initialization report in on_configure.
+  // Bounds set by the *_timeout_ms hardware parameters: the wait for the controller's
+  // initialization report in on_configure, the drives-on wait and the first RSI packet in
+  // on_activate, and how long a stop may stay pending before it is settled.
   static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};
+  static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{3'000};
+  static constexpr std::chrono::milliseconds DEFAULT_FIRST_PACKET_TIMEOUT{5'000};
+  static constexpr std::chrono::milliseconds DEFAULT_STOP_PENDING_TIMEOUT{3'000};
   std::chrono::milliseconds configure_timeout_{DEFAULT_CONFIGURE_TIMEOUT};
+  std::chrono::milliseconds drives_on_timeout_{DEFAULT_DRIVES_ON_TIMEOUT};
+  std::chrono::milliseconds first_packet_timeout_{DEFAULT_FIRST_PACKET_TIMEOUT};
+  std::chrono::milliseconds stop_pending_timeout_{DEFAULT_STOP_PENDING_TIMEOUT};
 
   // Fixed cycle time and control mode for this driver version.
   static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;
@@ -217,6 +229,9 @@ private:
 
   KUKA_RSI_DRIVER_LOCAL bool LoadXmlConfig(
     const std::string & path, kuka::external::control::kss::Configuration & config) const;
+
+  KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameter(
+    const char * name, std::chrono::milliseconds fallback, std::chrono::milliseconds & value);
 
   // Parsed XML config populated during on_init; applied to Configuration in SetupRobot.
   std::optional<kuka::external::control::kss::MotionStateXmlConfiguration> motion_state_xml_config_;

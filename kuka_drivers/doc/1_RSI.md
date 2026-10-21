@@ -65,6 +65,11 @@ The parameters in the driver configuration file can be changed during runtime us
 Besides the parameters the launch arguments set (`controller_ip`, `client_ip`, `client_port`, `mxa_client_port`, `verify_robot_model`, `rsi_xml_config_file`), the `<hardware>` block of the `ros2_control` description accepts:
 
 - `configure_timeout_ms`: how long `on_configure` of the `eki_rsi` and `mxa_rsi` hardware interfaces waits for the controller's initialization report before it fails, in milliseconds (positive integer, defaults to 1500). On expiry the component stays `unconfigured`, the connection is released and the error names the bound and the controller IP, so `configure` can be requested again. Set it in the `<hardware>` block of your own `ros2_control` xacro, for example `<param name="configure_timeout_ms">5000</param>`.
+- `drives_on_timeout_ms`: how long `on_activate` waits for the drives to report powered after it requests them on, in milliseconds (positive integer, defaults to 3000). On expiry activation fails and the component stays `inactive`.
+- `first_packet_timeout_ms`: how long `on_activate` waits for the first RSI packet after it requests the RSI start, in milliseconds (positive integer, defaults to 5000). A healthy controller answers within about 2 s. On expiry activation fails, the RSI program is cancelled and the drives are turned off, so the next activation starts from a known state.
+- `stop_pending_timeout_ms`: how long a stop requested by `on_deactivate`, or by a failed activation, may stay pending, in milliseconds (positive integer, defaults to 3000). Activation is refused while the stop is pending. The stop completes once the controller confirms the RSI program cancel and reports the drives off. On expiry with the cancel confirmed, the stop is treated as complete even if the drives still report powered, which some controller modes never clear; with the cancel not confirmed, activation stays refused and the log says so once. `configure` again to recover.
+
+All four apply to the `eki_rsi` and `mxa_rsi` hardware interfaces.
 
 ### I/O configuration
 

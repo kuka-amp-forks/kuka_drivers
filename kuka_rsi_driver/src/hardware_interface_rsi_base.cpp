@@ -629,38 +629,55 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   // The status arrives on the mxA thread; read() may not have copied it yet.
   control_state_.status_manager.UpdateStateInterfaces();
 
+  if (runtime_state_.stop_pending)
+  {
+    CheckStopComplete();
+    if (runtime_state_.stop_pending)
+    {
+      RCLCPP_ERROR(
+        logger_, "Activation refused: stop pending, RSI program cancel %s, drives %s",
+        runtime_state_.cancel_confirmed ? "confirmed" : "not confirmed",
+        control_state_.status_manager.DrivesPowered() ? "still powered" : "off");
+      return CallbackReturn::FAILURE;
+    }
+  }
+
   if (control_state_.status_manager.IsEmergencyStopActive())
   {
-    RCLCPP_ERROR(logger_, "Emergency stop is active. Cannot activate hardware interface.");
+    RCLCPP_ERROR(logger_, "Activation refused: Emergency stop is active");
     return CallbackReturn::FAILURE;
   }
 
   if (!control_state_.status_manager.IsKrcInExtMode())
   {
-    RCLCPP_ERROR(logger_, "KRC not in EXT. Switch to EXT to activate.");
+    RCLCPP_ERROR(logger_, "Activation refused: KRC not in EXT");
     return CallbackReturn::FAILURE;
   }
 
   if (!control_state_.status_manager.DrivesPowered())
   {
-    RCLCPP_INFO(logger_, "Turning on drives");
+    RCLCPP_INFO(
+      logger_, "Turning on drives, waiting up to %ld ms",
+      static_cast<int64_t>(drives_on_timeout_.count()));
     robot_ptr_->TurnOnDrives();
 
-    // Wait for drives to be powered up
-    auto start_time = std::chrono::steady_clock::now();
+    const auto start_time = std::chrono::steady_clock::now();
     while (!control_state_.status_manager.DrivesPowered())
     {
-      if (
-        std::chrono::steady_clock::now() - start_time >
-        KukaRSIHardwareInterfaceBase::DRIVES_POWERED_TIMEOUT)
+      if (std::chrono::steady_clock::now() - start_time > drives_on_timeout_)
       {
-        RCLCPP_ERROR(logger_, "Timeout waiting for drives to power on. Check robot state.");
+        RCLCPP_ERROR(
+          logger_, "Activation failed: drives not powered within %ld ms",
+          static_cast<int64_t>(drives_on_timeout_.count()));
         return CallbackReturn::FAILURE;
       }
+      std::this_thread::sleep_for(DRIVES_POWERED_CHECK_INTERVAL);
       control_state_.status_manager.UpdateStateInterfaces();
-      std::this_thread::sleep_for(KukaRSIHardwareInterfaceBase::DRIVES_POWERED_CHECK_INTERVAL);
     }
-    RCLCPP_INFO(logger_, "Drives successfully powered on");
+    RCLCPP_INFO(
+      logger_, "Drives successfully powered on after %.0f ms",
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time)
+        .count());
   }
 
   // Set the cycle time on every activation: the mxA client starts at UNSPECIFIED and sends
@@ -672,7 +689,11 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     return CallbackReturn::FAILURE;
   }
 
-  RCLCPP_INFO(logger_, "Starting joint position control at %.0f ms", RSI_CYCLE_TIME_MS);
+  RCLCPP_INFO(
+    logger_,
+    "Starting joint position control at %.0f ms, waiting up to %ld ms for the first RSI packet",
+    RSI_CYCLE_TIME_MS, static_cast<int64_t>(first_packet_timeout_.count()));
+  const auto start_request_time = std::chrono::steady_clock::now();
   kuka::external::control::Status control_status = robot_ptr_->StartControlling(CONTROL_MODE);
   if (control_status.return_code == kuka::external::control::ReturnCode::ERROR)
   {
@@ -680,9 +701,18 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     return CallbackReturn::FAILURE;
   }
 
-  // We must first receive the initial position of the robot
-  // We set a longer timeout, since the first message might not arrive all that fast
-  Read(5 * READ_TIMEOUT_MS);
+  Read(first_packet_timeout_.count());
+  if (!runtime_state_.msg_received)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "Activation failed: no RSI packet within %ld ms of the start request, cancelling the RSI "
+      "program and turning off the drives",
+      static_cast<int64_t>(first_packet_timeout_.count()));
+    robot_ptr_->ResetControlSignal();
+    RequestStop();
+    return CallbackReturn::FAILURE;
+  }
   std::copy(
     interface_data_.position_states.cbegin(), interface_data_.position_states.cend(),
     interface_data_.position_commands.begin());
@@ -701,7 +731,11 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   runtime_state_.msg_received = false;
   runtime_state_.is_active = true;
 
-  RCLCPP_INFO(logger_, "Received position data from robot controller!");
+  RCLCPP_INFO(
+    logger_, "Received position data from robot controller %.0f ms after the start request",
+    std::chrono::duration<double, std::milli>(
+      diagnostics_state_.last_msg_received_time - start_request_time)
+      .count());
 
   return CallbackReturn::SUCCESS;
 }
@@ -743,26 +777,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
   runtime_state_.is_active = false;
   runtime_state_.msg_received = false;
 
-  runtime_state_.cancel_confirmed = false;
-  const auto cancel_status = robot_ptr_->RequestRsiProgramCancel();
-  if (cancel_status.return_code == ReturnCode::UNSUPPORTED)
-  {
-    // EKI has only the blocking cancel.
-    robot_ptr_->CancelRsiProgram();
-    runtime_state_.cancel_confirmed = true;
-  }
-  else if (cancel_status.return_code != ReturnCode::OK)
-  {
-    RCLCPP_WARN(logger_, "Requesting the RSI program cancel failed: %s", cancel_status.message);
-  }
-
-  if (control_state_.status_manager.DrivesPowered())
-  {
-    RCLCPP_INFO(logger_, "Turning off drives");
-    robot_ptr_->TurnOffDrives();
-  }
-  runtime_state_.stop_pending = true;
-  runtime_state_.stop_pending_cycles = 0;
+  RequestStop();
 
   const double after_stop_ms =
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stop_time).count();
@@ -787,6 +802,34 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
   return CallbackReturn::SUCCESS;
 }
 
+void KukaRSIHardwareInterfaceBase::RequestStop()
+{
+  using kuka::external::control::ReturnCode;
+
+  runtime_state_.cancel_confirmed = false;
+  const auto cancel_status = robot_ptr_->RequestRsiProgramCancel();
+  if (cancel_status.return_code == ReturnCode::UNSUPPORTED)
+  {
+    // EKI has only the blocking cancel.
+    robot_ptr_->CancelRsiProgram();
+    runtime_state_.cancel_confirmed = true;
+  }
+  else if (cancel_status.return_code != ReturnCode::OK)
+  {
+    RCLCPP_WARN(logger_, "Requesting the RSI program cancel failed: %s", cancel_status.message);
+  }
+
+  if (control_state_.status_manager.DrivesPowered())
+  {
+    RCLCPP_INFO(logger_, "Turning off drives");
+    robot_ptr_->TurnOffDrives();
+  }
+  runtime_state_.stop_pending = true;
+  runtime_state_.stop_pending_cycles = 0;
+  runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
+  runtime_state_.stop_timeout_reported = false;
+}
+
 void KukaRSIHardwareInterfaceBase::CheckStopComplete()
 {
   runtime_state_.stop_pending_cycles++;
@@ -800,6 +843,32 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
       logger_, "Stop complete: RSI program cancelled and drives off, %lu cycles after deactivation",
       runtime_state_.stop_pending_cycles);
     runtime_state_.stop_pending = false;
+    return;
+  }
+
+  if (std::chrono::steady_clock::now() - runtime_state_.stop_requested_time < stop_pending_timeout_)
+  {
+    return;
+  }
+  const auto timeout_ms = static_cast<int64_t>(stop_pending_timeout_.count());
+  if (runtime_state_.cancel_confirmed)
+  {
+    // Some KRC modes never report the drives off; the cancel is the part that matters.
+    RCLCPP_WARN(
+      logger_,
+      "Stop complete: RSI program cancelled, drives still report powered after %ld ms, %lu cycles "
+      "after deactivation",
+      timeout_ms, runtime_state_.stop_pending_cycles);
+    runtime_state_.stop_pending = false;
+  }
+  else if (!runtime_state_.stop_timeout_reported)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "RSI program cancel not confirmed within %ld ms, activation stays refused until it is; "
+      "reconfigure to recover",
+      timeout_ms);
+    runtime_state_.stop_timeout_reported = true;
   }
 }
 
@@ -896,29 +965,41 @@ void KukaRSIHardwareInterfaceBase::ConfigureJoints(
   }
 }
 
-bool KukaRSIHardwareInterfaceBase::ReadConfigureTimeout()
+bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameters()
 {
-  const auto it = info_.hardware_parameters.find("configure_timeout_ms");
+  return ReadTimeoutParameter(
+           "configure_timeout_ms", DEFAULT_CONFIGURE_TIMEOUT, configure_timeout_) &&
+         ReadTimeoutParameter(
+           "drives_on_timeout_ms", DEFAULT_DRIVES_ON_TIMEOUT, drives_on_timeout_) &&
+         ReadTimeoutParameter(
+           "first_packet_timeout_ms", DEFAULT_FIRST_PACKET_TIMEOUT, first_packet_timeout_) &&
+         ReadTimeoutParameter(
+           "stop_pending_timeout_ms", DEFAULT_STOP_PENDING_TIMEOUT, stop_pending_timeout_);
+}
+
+bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameter(
+  const char * name, std::chrono::milliseconds fallback, std::chrono::milliseconds & value)
+{
+  const auto it = info_.hardware_parameters.find(name);
   if (it == info_.hardware_parameters.end())
   {
-    configure_timeout_ = DEFAULT_CONFIGURE_TIMEOUT;
+    value = fallback;
     return true;
   }
   try
   {
     std::size_t parsed = 0;
-    const int64_t value = std::stoll(it->second, &parsed);
-    if (parsed == it->second.size() && value > 0)
+    const int64_t number = std::stoll(it->second, &parsed);
+    if (parsed == it->second.size() && number > 0)
     {
-      configure_timeout_ = std::chrono::milliseconds(value);
+      value = std::chrono::milliseconds(number);
       return true;
     }
   }
   catch (const std::exception &)
   {
   }
-  RCLCPP_ERROR(
-    logger_, "configure_timeout_ms must be a positive integer, got '%s'", it->second.c_str());
+  RCLCPP_ERROR(logger_, "%s must be a positive integer, got '%s'", name, it->second.c_str());
   return false;
 }
 
