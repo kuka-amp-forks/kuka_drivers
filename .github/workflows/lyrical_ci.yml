@@ -1,4 +1,4 @@
-name: Lyrical CI (amp/lyrical)
+name: Lyrical CI
 run-name: Lyrical CI - ${{ github.event_name }}
 
 # Builds the RSI driver against the same Lyrical apt snapshot and dependency pins
@@ -10,9 +10,11 @@ on:
     branches:
       - amp/lyrical
   pull_request:
-    branches:
-      - amp/lyrical
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
