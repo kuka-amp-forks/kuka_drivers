@@ -107,7 +107,20 @@ jobs:
           colcon test-result --all
           count=$(printf '%s\n' "${results}" | sed -n 's/^Summary: \([0-9][0-9]*\) tests\?,.*/\1/p')
           echo "kuka_rsi_driver: colcon recorded ${count:-0} tests"
+          {
+            echo "### kuka_rsi_driver test results"
+            echo '```'
+            printf '%s\n' "${results}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          # Every add_launch_test() must be registered, not just one.
+          expected=$(grep -c '^\s*add_launch_test(' \
+            src/kuka_drivers/kuka_rsi_driver/CMakeLists.txt)
+          registered=$(ctest --test-dir build/kuka_rsi_driver -N \
+            | sed -n 's/^Total Tests: \([0-9][0-9]*\)/\1/p')
+          echo "kuka_rsi_driver: expected >= ${expected} launch tests, ctest registered ${registered:-0}"
           [ "${count:-0}" -ge 1 ]
+          [ "${registered:-0}" -ge "${expected}" ]
 
       - name: Upload test results
         if: ${{ !cancelled() }}
