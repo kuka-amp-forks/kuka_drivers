@@ -372,6 +372,25 @@ ros2 lifecycle set robot_manager configure
 ros2 lifecycle set robot_manager activate
 ```
 
+### Fault injection
+
+`kuka_rsi_simulator` can inject three RSI faults at runtime, for driver fault-path
+testing. All are off by default, and can be set with `ros2 param set` while the
+driver is active:
+
+| Parameter | Default | Unit | Effect |
+|---|---|---|---|
+| `fault_late_packet_cycles` | `0` | cycles | Delays the next state send by N cycles, then resumes; the IPOC sequence stays contiguous. |
+| `fault_dropped_packet_count` | `0` | cycles | Skips sending the next K states entirely, then resumes. |
+| `fault_repeated_ipoc_count` | `0` | cycles | Sends the current IPOC again for K more cycles instead of incrementing it. |
+
+Each parameter re-arms on every set; a value is consumed (reset to its effect,
+not reapplied) once the fault has run its course. Example:
+
+```bash
+ros2 param set /kuka_rsi_simulator fault_late_packet_cycles 3
+```
+
 
 ## External axes configuration
 

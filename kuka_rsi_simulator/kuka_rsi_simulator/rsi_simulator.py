@@ -15,11 +15,13 @@
 import signal
 import socket
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
 import rclpy
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -430,6 +432,9 @@ class RSISimulator(Node):
     socket_ = None
     rsi_xml_config_ = None
     ignore_ipoc_ = False
+    late_packet_cycles_ = 0
+    dropped_packet_remaining_ = 0
+    repeated_ipoc_remaining_ = 0
 
     def __init__(self, node_name):
         super().__init__(node_name)
@@ -439,6 +444,9 @@ class RSISimulator(Node):
         self.declare_parameter("rsi_port", 59152)
         self.declare_parameter("rsi_xml_config_file", "")
         self.declare_parameter("ignore_ipoc", False)
+        self.declare_parameter("fault_late_packet_cycles", 0)
+        self.declare_parameter("fault_dropped_packet_count", 0)
+        self.declare_parameter("fault_repeated_ipoc_count", 0)
         self.rsi_ip_address_ = (
             self.get_parameter("rsi_ip_address").get_parameter_value().string_value
         )
@@ -447,6 +455,16 @@ class RSISimulator(Node):
             self.get_parameter("rsi_xml_config_file").get_parameter_value().string_value
         )
         self.ignore_ipoc_ = self.get_parameter("ignore_ipoc").get_parameter_value().bool_value
+        self.late_packet_cycles_ = (
+            self.get_parameter("fault_late_packet_cycles").get_parameter_value().integer_value
+        )
+        self.dropped_packet_remaining_ = (
+            self.get_parameter("fault_dropped_packet_count").get_parameter_value().integer_value
+        )
+        self.repeated_ipoc_remaining_ = (
+            self.get_parameter("fault_repeated_ipoc_count").get_parameter_value().integer_value
+        )
+        self.add_on_set_parameters_callback(self._on_fault_parameter_set)
         self.rsi_xml_config_ = _load_rsi_xml_config(rsi_xml_config_file)
         self.rsi_act_pub_ = self.create_publisher(String, self.node_name_ + "/rsi/state", 1)
         self.rsi_cmd_pub_ = self.create_publisher(String, self.node_name_ + "/rsi/command", 1)
@@ -461,14 +479,46 @@ class RSISimulator(Node):
         self.get_logger().info("Successfully created socket")
         self.socket_.settimeout(self.cycle_time)
 
+    def _on_fault_parameter_set(self, params):
+        for param in params:
+            if param.name in (
+                "fault_late_packet_cycles",
+                "fault_dropped_packet_count",
+                "fault_repeated_ipoc_count",
+            ):
+                if param.value < 0:
+                    return SetParametersResult(
+                        successful=False, reason=f"{param.name} must be >= 0"
+                    )
+        for param in params:
+            if param.name == "fault_late_packet_cycles":
+                self.late_packet_cycles_ = param.value
+            elif param.name == "fault_dropped_packet_count":
+                self.dropped_packet_remaining_ = param.value
+            elif param.name == "fault_repeated_ipoc_count":
+                self.repeated_ipoc_remaining_ = param.value
+        return SetParametersResult(successful=True)
+
     def timer_callback(self):
+        if self.dropped_packet_remaining_ > 0:
+            self.dropped_packet_remaining_ -= 1
+            self.get_logger().warning("Dropped packet injected")
+            return
+
+        if self.late_packet_cycles_ > 0:
+            delay_cycles = self.late_packet_cycles_
+            self.late_packet_cycles_ = 0
+            self.get_logger().warning(f"Late packet injected, delaying {delay_cycles} cycle(s)")
+            time.sleep(delay_cycles * self.cycle_time)
+
+        send_ipoc = self.ipoc
         try:
             msg = create_rsi_xml_rob(
                 self.act_joint_pos,
                 self.act_joint_vel,
                 self.act_joint_torque,
                 self.timeout_count,
-                self.ipoc,
+                send_ipoc,
                 self.rsi_xml_config_,
             )
             self.rsi_act_pub_.publish(String(data=msg.decode("utf-8")))
@@ -486,17 +536,20 @@ class RSISimulator(Node):
             self.act_joint_pos = self.initial_joint_pos + des_joint_correction_absolute
             self.act_joint_vel = des_joint_velocity
             self.act_joint_torque = des_joint_torque
-            if not self.ignore_ipoc_ and ipoc_recv != self.ipoc:
+            if not self.ignore_ipoc_ and ipoc_recv != send_ipoc:
                 self.get_logger().warning("Packet is late")
-                self.get_logger().warning(f"sent ipoc: {self.ipoc}, received: {ipoc_recv}")
-                if self.ipoc != 0:
+                self.get_logger().warning(f"sent ipoc: {send_ipoc}, received: {ipoc_recv}")
+                if send_ipoc != 0:
                     self.timeout_count += 1
-            self.ipoc += 1
+            if self.repeated_ipoc_remaining_ > 0:
+                self.repeated_ipoc_remaining_ -= 1
+            else:
+                self.ipoc += 1
             if stop_flag:
                 self.on_shutdown()
                 sys.exit()
         except OSError:
-            if self.ipoc != 0:
+            if send_ipoc != 0:
                 self.timeout_count += 1
                 self.get_logger().warning("Socket timed out")
 
