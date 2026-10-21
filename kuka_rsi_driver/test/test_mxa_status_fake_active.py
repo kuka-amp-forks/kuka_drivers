@@ -102,12 +102,13 @@ class TestMxaStatusFakeActive(MxaStatusFakeTestCase):
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         super().tearDown()
 
-    def test_read_reports_condition(self, proc_output, condition, message):
+    def test_read_reports_condition(self, proc_output, proc_info, condition, message):
         log = LogCursor(proc_output)
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activate refused")
         self.assertTrue(log.wait_for(f"Successful 'activate' of hardware '{COMPONENT}'", 30))
         self.inject(condition)
         self.assertTrue(log.wait_for(message, timeout=5), f"{condition} did not log {message!r}")
+        self.deactivate_and_wait_for_simulator(proc_info)
 
 
 @launch_testing.post_shutdown_test()

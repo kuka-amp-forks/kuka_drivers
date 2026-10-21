@@ -122,7 +122,7 @@ class TestMxaStatusFake(MxaStatusFakeTestCase):
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
         self.assertTrue(log.wait_for("KRC not in EXT", timeout=5))
 
-    def test_resume_delivers_status_and_activates(self, proc_output):
+    def test_resume_delivers_status_and_activates(self, proc_output, proc_info):
         log = LogCursor(proc_output)
         self.inject(f"operation_mode={OP_MODE_T1}")
         self.inject("stall")
@@ -132,6 +132,7 @@ class TestMxaStatusFake(MxaStatusFakeTestCase):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
         self.assertTrue(log.wait_for("Drives successfully powered on", timeout=5))
         self.assertTrue(log.wait_for(f"Successful 'activate' of hardware '{COMPONENT}'", 30))
+        self.deactivate_and_wait_for_simulator(proc_info)
 
 
 @launch_testing.post_shutdown_test()

@@ -121,7 +121,7 @@ class TestActivatesWithoutKroshuControllers(MxaStatusFakeTestCase):
         )
         self.assertTrue(result.ok, f"switch_controller {activate} {deactivate} refused")
 
-    def test_activates_without_kroshu_controllers(self, proc_output):
+    def test_activates_without_kroshu_controllers(self, proc_output, proc_info):
         log = LogCursor(proc_output)
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
 
@@ -142,8 +142,7 @@ class TestActivatesWithoutKroshuControllers(MxaStatusFakeTestCase):
         self._switch(activate=["joint_trajectory_controller"])
         self.move_joint_and_wait()
         self._switch(deactivate=["joint_trajectory_controller"])
-
-        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.deactivate_and_wait_for_simulator(proc_info)
 
 
 @launch_testing.post_shutdown_test()

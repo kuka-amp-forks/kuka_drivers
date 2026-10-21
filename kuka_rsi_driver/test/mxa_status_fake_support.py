@@ -22,6 +22,7 @@ import time
 import xacro
 from ament_index_python.packages import get_package_share_directory
 from controller_manager_msgs.srv import ListHardwareComponents, SetHardwareComponentState
+from lifecycle_msgs.msg import State
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 
@@ -122,6 +123,11 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         if self.component_state() != state_id:
             self.assertTrue(self.set_component_state(state_id), f"transition to {state_id}")
         self.assertEqual(self.component_state(), state_id)
+
+    def deactivate_and_wait_for_simulator(self, proc_info):
+        """Deactivate, then wait for the RSI simulator to exit on the stop flag it reads late."""
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
 
     def publish_is_configured(self):
         """Tell control_node to run read() and write(): it only does so after this is true."""
