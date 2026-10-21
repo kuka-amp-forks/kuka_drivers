@@ -63,7 +63,7 @@ def generate_test_description():
                     f"{COMPONENT}.urdf.xacro",
                 ]
             ),
-            " driver_version:=rsi_only client_ip:=0.0.0.0 client_port:=59153 roundtrip_time:=4000",
+            " driver_version:=rsi_only client_ip:=0.0.0.0 client_port:=59152 roundtrip_time:=4000",
         ],
         on_stderr="capture",
     )
@@ -126,6 +126,7 @@ class LoopBlocksOrSleepsEveryCycleInEveryState(JointMoveTestCase):
 
     def _assert_not_spinning(self, pid, label):
         cpu = self._cpu_percent(pid)
+        print(f"control_node CPU in {label}: {cpu:.1f}%")
         self.assertLess(
             cpu,
             SPIN_THRESHOLD_PERCENT,
