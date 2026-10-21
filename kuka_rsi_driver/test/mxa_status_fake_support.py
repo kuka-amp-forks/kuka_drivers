@@ -56,9 +56,22 @@ DEACTIVATION_LINE = re.compile(
     r"cancel and drives-off requested ([0-9.]+) ms after it"
 )
 STOP_COMPLETE_LINE = "Stop complete: RSI program cancelled and drives off"
+STOP_COMPLETE_DRIVES_ON_LINE = "Stop complete: RSI program cancelled, drives still report powered"
+STOP_PENDING_REFUSAL = "Activation refused: stop pending"
+FIRST_PACKET_FAILURE = "Activation failed: no RSI packet within"
+RECEIVED_FIRST_PACKET = "Received position data from robot controller"
+FAKE_CANCEL_REQUESTED = "mxA status fake: RSI program cancel requested"
+FAKE_REPORT_LINE = re.compile(
+    r"mxA status fake: rsi_running=(\d) cancel_pending=(\d+) cancelled=(\d) drives_powered=(\d)"
+)
 
 
-def robot_description():
+def hardware_params(**values):
+    """Render extra <param> elements for the <hardware> block, e.g. first_packet_timeout_ms."""
+    return "".join(f'<param name="{name}">{value}</param>' for name, value in values.items())
+
+
+def robot_description(extra_params=""):
     """Build the mxa_rsi description with the test-only plugin in place of the shipped one."""
     urdf = xacro.process_file(
         os.path.join(
@@ -74,12 +87,19 @@ def robot_description():
         },
     ).toxml()
     assert PRODUCTION_PLUGIN in urdf
-    return urdf.replace(PRODUCTION_PLUGIN, FAKE_PLUGIN)
+    return urdf.replace(PRODUCTION_PLUGIN, FAKE_PLUGIN + extra_params)
 
 
-def fake_launch_description(update_rate=250):
-    """control_node on the fake, starting inactive, with robot_state_publisher and simulator."""
-    description = {"robot_description": robot_description()}
+def fake_launch_description(
+    update_rate=250, extra_params="", simulator=True, respawn_simulator=False
+):
+    """
+    control_node on the fake, starting inactive, with robot_state_publisher.
+
+    The RSI simulator exits on the stop flag of a deactivation; a test that activates again
+    afterwards needs it respawned. Without the simulator no RSI packet ever arrives.
+    """
+    description = {"robot_description": robot_description(extra_params)}
 
     control_node = launch_ros.actions.Node(
         package="kuka_drivers_core",
@@ -101,24 +121,31 @@ def fake_launch_description(update_rate=250):
         parameters=[description],
     )
 
-    simulator = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            [
-                get_package_share_directory("kuka_rsi_simulator"),
-                "/launch/",
-                "kuka_rsi_simulator.launch.py",
-            ]
+    actions = [control_node, robot_state_publisher]
+    if respawn_simulator:
+        actions.append(
+            launch_ros.actions.Node(
+                package="kuka_rsi_simulator",
+                executable="rsi_simulator",
+                name="kuka_rsi_simulator",
+                respawn=True,
+                respawn_delay=0.2,
+            )
         )
-    )
-
-    return launch.LaunchDescription(
-        [
-            control_node,
-            robot_state_publisher,
-            simulator,
-            launch_testing.actions.ReadyToTest(),
-        ]
-    )
+    elif simulator:
+        actions.append(
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    [
+                        get_package_share_directory("kuka_rsi_simulator"),
+                        "/launch/",
+                        "kuka_rsi_simulator.launch.py",
+                    ]
+                )
+            )
+        )
+    actions.append(launch_testing.actions.ReadyToTest())
+    return launch.LaunchDescription(actions)
 
 
 class LogCursor:
@@ -188,6 +215,20 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         )
         return result.ok
 
+    def timed_set_component_state(self, state_id):
+        """Return (ok, seconds) for a transition request, timed around the service call."""
+        start = time.monotonic()
+        ok = self.set_component_state(state_id)
+        return ok, time.monotonic() - start
+
+    def fake_report(self, proc_output):
+        """Ask the fake for its RSI context state; return the regex match on its log line."""
+        log = LogCursor(proc_output)
+        self.inject("report")
+        match = log.wait_for_match(FAKE_REPORT_LINE, timeout=5)
+        self.assertIsNotNone(match, "no report line from the mxA status fake")
+        return match
+
     def ensure_component_state(self, state_id):
         if self.component_state() != state_id:
             self.assertTrue(self.set_component_state(state_id), f"transition to {state_id}")
@@ -248,13 +289,20 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
 __all__ = [
     "COMPONENT",
     "DEACTIVATION_LINE",
+    "FAKE_CANCEL_REQUESTED",
     "FAKE_PORT",
+    "FAKE_REPORT_LINE",
+    "FIRST_PACKET_FAILURE",
     "OP_MODE_EXT",
     "OP_MODE_T1",
+    "RECEIVED_FIRST_PACKET",
     "SIMULATOR_CYCLE_MS",
+    "STOP_COMPLETE_DRIVES_ON_LINE",
     "STOP_COMPLETE_LINE",
+    "STOP_PENDING_REFUSAL",
     "LogCursor",
     "MxaStatusFakeTestCase",
     "fake_launch_description",
+    "hardware_params",
     "robot_description",
 ]
