@@ -45,8 +45,8 @@ def generate_test_description():
 
 class TestNoCommandAfterLatch(RsiFaultTestCase):
     def test_no_command_after_latch(self, proc_output):
-        log = LogCursor(proc_output)
-        self.start_streaming(log)
+        run_log = LogCursor(proc_output)
+        self.start_streaming(run_log)
 
         log = LogCursor(proc_output)
         self.set_simulator_fault("fault_dropped_packet_count", DROPPED_PACKETS)
@@ -59,7 +59,7 @@ class TestNoCommandAfterLatch(RsiFaultTestCase):
         self.wait_for_states_after(latched_ipoc, count=UNANSWERED_STATES)
         self.assertTrue(log.wait_for("Socket timed out", timeout=5), "simulator got an answer")
         self.assertEqual(self.commands_after(latched_ipoc), [], "command sent after the latch")
-        commands = self.logged_commands(log)
+        commands = self.logged_commands(run_log)
         self.assertEqual(commands[-1], (latched_ipoc, False), commands)
         self.assertTrue(all(i <= latched_ipoc and not stop for i, stop in commands), commands)
 
