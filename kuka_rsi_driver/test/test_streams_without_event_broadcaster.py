@@ -32,15 +32,13 @@ from controller_manager_msgs.srv import (
 )
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, FindExecutable, PathJoinSubstitution
 from lifecycle_msgs.msg import State
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from joint_move_test_case import JointMoveTestCase  # noqa: E402
-
-COMPONENT = "kr6_r700_2"
+from rsi_only_support import COMPONENT, rsi_only_description  # noqa: E402
 
 
 def _config(name):
@@ -50,21 +48,7 @@ def _config(name):
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
 def generate_test_description():
-    robot_description = Command(
-        [
-            PathJoinSubstitution([FindExecutable(name="xacro")]),
-            " ",
-            PathJoinSubstitution(
-                [
-                    get_package_share_directory("kuka_agilus_support"),
-                    "urdf",
-                    f"{COMPONENT}.urdf.xacro",
-                ]
-            ),
-            " driver_version:=rsi_only client_ip:=0.0.0.0 client_port:=59152 roundtrip_time:=4000",
-        ],
-        on_stderr="capture",
-    )
+    robot_description = rsi_only_description()
 
     control_node = launch_ros.actions.Node(
         package="kuka_drivers_core",

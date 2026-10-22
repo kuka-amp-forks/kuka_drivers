@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""robot_manager brings the rsi_only component up on the simulator and a trajectory runs."""
+
 import os
 import sys
 
@@ -28,26 +30,64 @@ from launch.launch_description_sources.python_launch_description_source import (
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from joint_move_test_case import JointMoveTestCase  # noqa: E402
+from rsi_only_support import COMPONENT, rsi_only_description  # noqa: E402
 
 
-# Launch driver startup
+def _config(name):
+    return os.path.join(get_package_share_directory("kuka_rsi_driver"), "config", name)
+
+
+def _spawner(name, param_file=None):
+    arguments = [name, "-c", "controller_manager"]
+    if param_file:
+        arguments += ["--param-file", param_file]
+    return launch_ros.actions.Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=arguments + ["--inactive"],
+    )
+
+
+# The nodes of startup.launch.py for rsi_only, with the simulator's read timeout in the
+# description, which the stock xacro cannot carry.
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
 def generate_test_description():
+    description = {"robot_description": rsi_only_description()}
+
+    control_node = launch_ros.actions.Node(
+        package="kuka_drivers_core",
+        executable="control_node",
+        parameters=[
+            description,
+            _config("ros2_controller_config_rsi_only.yaml"),
+            {"hardware_components_initial_state": {"unconfigured": [COMPONENT]}},
+        ],
+    )
+    robot_manager = launch_ros.actions.LifecycleNode(
+        name="robot_manager",
+        namespace="",
+        package="kuka_rsi_driver",
+        executable="robot_manager_node_rsi_only",
+        parameters=[_config("driver_config.yaml"), {"robot_models": [COMPONENT]}],
+    )
+    robot_state_publisher = launch_ros.actions.Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="both",
+        parameters=[description],
+    )
+
     return launch.LaunchDescription(
         [
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    [
-                        get_package_share_directory("kuka_rsi_driver"),
-                        "/launch/",
-                        "startup.launch.py",
-                    ]
-                ),
-                launch_arguments={
-                    "driver_version": "rsi_only",
-                }.items(),
+            control_node,
+            robot_manager,
+            robot_state_publisher,
+            _spawner("joint_state_broadcaster"),
+            _spawner(
+                "joint_trajectory_controller", _config("joint_trajectory_controller_config.yaml")
             ),
+            _spawner("event_broadcaster", _config("kuka_event_broadcaster_config.yaml")),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     [
@@ -77,14 +117,16 @@ class TestDriverActivation(JointMoveTestCase):
     def test_read_stdout(self, proc_output):
         # Check for successful initialization
         proc_output.assertWaitFor("Robot initialized", timeout=5)
-        proc_output.assertWaitFor("Successful initialization of hardware 'kr6_r700_2'", timeout=5)
+        proc_output.assertWaitFor(
+            f"Successful initialization of hardware '{COMPONENT}'", timeout=5
+        )
         # Check whether disabling automatic activation was successful
         proc_output.assertWaitFor(
-            "Setting component 'kr6_r700_2' to 'unconfigured' state.", timeout=5
+            f"Setting component '{COMPONENT}' to 'unconfigured' state.", timeout=5
         )
         # Check for successful configuration and activation
-        proc_output.assertWaitFor("Successful 'configure' of hardware 'kr6_r700_2'", timeout=25)
-        proc_output.assertWaitFor("Successful 'activate' of hardware 'kr6_r700_2'", timeout=30)
+        proc_output.assertWaitFor(f"Successful 'configure' of hardware '{COMPONENT}'", timeout=25)
+        proc_output.assertWaitFor(f"Successful 'activate' of hardware '{COMPONENT}'", timeout=30)
 
         self._wait_for_controller_active("joint_trajectory_controller", timeout=20)
         self.move_joint_and_wait()
