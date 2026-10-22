@@ -839,9 +839,13 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
   }
   if (runtime_state_.cancel_confirmed && !control_state_.status_manager.DrivesPowered())
   {
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - runtime_state_.stop_requested_time);
     RCLCPP_INFO(
-      logger_, "Stop complete: RSI program cancelled and drives off, %lu cycles after deactivation",
-      runtime_state_.stop_pending_cycles);
+      logger_,
+      "Stop complete: RSI program cancelled and drives off, %ld ms (%lu read cycles) after "
+      "deactivation",
+      elapsed_ms.count(), runtime_state_.stop_pending_cycles);
     runtime_state_.stop_pending = false;
     return;
   }
@@ -856,8 +860,8 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
     // Some KRC modes never report the drives off; the cancel is the part that matters.
     RCLCPP_WARN(
       logger_,
-      "Stop complete: RSI program cancelled, drives still report powered after %ld ms, %lu cycles "
-      "after deactivation",
+      "Stop complete: RSI program cancelled, drives still report powered after %ld ms (%lu read "
+      "cycles)",
       timeout_ms, runtime_state_.stop_pending_cycles);
     runtime_state_.stop_pending = false;
   }
