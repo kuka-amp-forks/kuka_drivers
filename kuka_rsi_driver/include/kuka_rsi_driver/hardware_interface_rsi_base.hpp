@@ -156,6 +156,7 @@ protected:
     bool stop_pending = false;
     bool cancel_confirmed = false;
     uint64_t stop_pending_cycles = 0;
+    std::chrono::steady_clock::time_point stop_pending_start{};
   };
 
   struct DiagnosticsState

@@ -763,6 +763,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
   }
   runtime_state_.stop_pending = true;
   runtime_state_.stop_pending_cycles = 0;
+  runtime_state_.stop_pending_start = std::chrono::steady_clock::now();
 
   const double after_stop_ms =
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stop_time).count();
@@ -796,9 +797,13 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
   }
   if (runtime_state_.cancel_confirmed && !control_state_.status_manager.DrivesPowered())
   {
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - runtime_state_.stop_pending_start);
     RCLCPP_INFO(
-      logger_, "Stop complete: RSI program cancelled and drives off, %lu cycles after deactivation",
-      runtime_state_.stop_pending_cycles);
+      logger_,
+      "Stop complete: RSI program cancelled and drives off, %ld ms (%lu read cycles) after "
+      "deactivation",
+      elapsed_ms.count(), runtime_state_.stop_pending_cycles);
     runtime_state_.stop_pending = false;
   }
 }
