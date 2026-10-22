@@ -117,6 +117,11 @@ if(BUILD_TESTING)
   add_launch_test(test/test_activate_refused_while_stop_pending.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_activate_bounded_without_first_packet.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_first_activation_receives_first_packet.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_deactivates_on_receive_failure.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_deactivates_on_send_failure.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_no_command_after_latch.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_faults_on_read_timeout.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_stop_reason_held_until_activate.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_exports_no_runtime_config.py
     TARGET test_exports_no_runtime_config_mxa_rsi ARGS "driver_version:=mxa_rsi")
   add_launch_test(test/test_exports_no_runtime_config.py
