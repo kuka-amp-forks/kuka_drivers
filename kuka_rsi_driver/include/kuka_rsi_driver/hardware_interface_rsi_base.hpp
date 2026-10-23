@@ -83,6 +83,9 @@ protected:
 
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
 
+  // Polled from read() while a stop is pending.
+  KUKA_RSI_DRIVER_LOCAL void CheckStopComplete();
+
   KUKA_RSI_DRIVER_LOCAL bool CheckJointInterfaces(
     const hardware_interface::ComponentInfo & joint) const;
 
@@ -149,6 +152,12 @@ protected:
     std::vector<int> gpio_states_to_commands_map;
     bool is_active = false;
     bool msg_received = false;
+    // Set by on_deactivate, cleared by read() once the cancel is confirmed and the drives are off.
+    bool stop_pending = false;
+    bool cancel_confirmed = false;
+    // Counts inactive read() calls (not RSI cycles) while a stop is pending.
+    uint64_t stop_pending_reads = 0;
+    std::chrono::steady_clock::time_point stop_pending_start{};
   };
 
   struct DiagnosticsState
@@ -183,6 +192,10 @@ protected:
   static constexpr std::chrono::seconds DRIVES_POWERED_TIMEOUT{3};
   static constexpr std::chrono::milliseconds DRIVES_POWERED_CHECK_INTERVAL{100};
   static constexpr int64_t READ_TIMEOUT_MS = 1'000;
+
+  // Bound on the wait for a pending cancel before on_cleanup releases the client.
+  static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
+  static constexpr std::chrono::milliseconds CLEANUP_CANCEL_CHECK_INTERVAL{10};
 
   // Bound on the wait for the controller's initialization report in on_configure.
   static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};

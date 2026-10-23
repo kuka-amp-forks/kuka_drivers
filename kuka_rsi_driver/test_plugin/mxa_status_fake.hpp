@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -39,6 +40,7 @@ namespace kuka_rsi_driver
 //   "period_ms=<int>"    telegram cadence; 0 stops the cadence
 //   "stall" / "resume"   stop or restart delivery to the driver
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
+//   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while stalled
 // Built only for tests, behind KukaMxaRsiStatusFakeHardwareInterface.
 class MxaStatusFake : public kuka::external::control::kss::rsi::Robot
 {
@@ -55,6 +57,8 @@ public:
   Status StartControlling(kuka::external::control::ControlMode) override;
   Status StopControlling() override;
   Status CancelRsiProgram() override;
+  Status RequestRsiProgramCancel() override;
+  bool IsRsiProgramCancelled() override;
   Status TurnOnDrives() override;
   Status TurnOffDrives() override;
   Status SetCycleTime(kuka::external::control::kss::CycleTime) override;
@@ -85,6 +89,10 @@ private:
   bool stalled_ = false;
   std::chrono::milliseconds period_{0};
   uint64_t telegrams_ = 0;
+  int cancel_cycles_ = 12;
+  int cancel_pending_ = 0;
+  bool cancelled_ = false;
+  std::condition_variable cancel_cv_;
   std::unique_ptr<kuka::external::control::EventHandler> event_handler_;
   std::unique_ptr<kuka::external::control::kss::IStatusUpdateHandler> status_handler_;
 };

@@ -110,6 +110,8 @@ if(BUILD_TESTING)
   add_launch_test(test/test_mxa_status_fake_active.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_activates_without_kroshu_controllers.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_on_activate_sees_fresh_status.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_deactivate_returns_within_one_cycle.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_deactivate_returns_with_mxa_link_down.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_exports_no_runtime_config.py
     TARGET test_exports_no_runtime_config_mxa_rsi ARGS "driver_version:=mxa_rsi")
   add_launch_test(test/test_exports_no_runtime_config.py

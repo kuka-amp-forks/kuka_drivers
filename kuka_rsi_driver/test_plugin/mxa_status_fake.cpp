@@ -87,8 +87,12 @@ MxaStatusFake::Status MxaStatusFake::StartControlling(kuka::external::control::C
         << ", only JOINT_POSITION_CONTROL is supported";
     return {ReturnCode::ERROR, msg.str().c_str()};
   }
-  rsi_running_ = true;
   std::lock_guard<std::mutex> lk{mtx_};
+  if (cancel_pending_ > 0)
+  {
+    return {ReturnCode::ERROR, "RSI program cancel still in progress"};
+  }
+  rsi_running_ = true;
   if (event_handler_)
   {
     event_handler_->OnSampling();
@@ -107,10 +111,30 @@ MxaStatusFake::Status MxaStatusFake::StopControlling()
   return result;
 }
 
+// Blocking form, like the SDK: no bound, so it never returns while stalled.
 MxaStatusFake::Status MxaStatusFake::CancelRsiProgram()
 {
+  RequestRsiProgramCancel();
+  std::unique_lock<std::mutex> lk{mtx_};
+  cancel_cv_.wait(lk, [this] { return cancelled_; });
+  return {ReturnCode::OK, "RSI program cancelled"};
+}
+
+MxaStatusFake::Status MxaStatusFake::RequestRsiProgramCancel()
+{
+  std::lock_guard<std::mutex> lk{mtx_};
   rsi_running_ = false;
-  return {ReturnCode::OK};
+  cancelled_ = cancel_cycles_ <= 0;
+  cancel_pending_ = cancelled_ ? 0 : cancel_cycles_;
+  RCLCPP_INFO(
+    logger_, "mxA status fake: RSI program cancel requested, done after %d cycles", cancel_cycles_);
+  return {ReturnCode::OK, "RSI program cancel requested"};
+}
+
+bool MxaStatusFake::IsRsiProgramCancelled()
+{
+  std::lock_guard<std::mutex> lk{mtx_};
+  return cancelled_;
 }
 
 MxaStatusFake::Status MxaStatusFake::TurnOnDrives()
@@ -189,6 +213,14 @@ void MxaStatusFake::Serve()
         ++telegrams_;
       }
     }
+    // Like the SDK, the cancel only progresses on a live link.
+    if (!stalled_ && cancel_pending_ > 0 && --cancel_pending_ == 0)
+    {
+      cancelled_ = true;
+      cancel_cv_.notify_all();
+      RCLCPP_INFO(
+        logger_, "mxA status fake: RSI program cancelled after %d cycles", cancel_cycles_);
+    }
   }
 }
 
@@ -258,6 +290,10 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   if (key == "period_ms")
   {
     period_ = std::chrono::milliseconds(number);
+  }
+  else if (key == "cancel_cycles")
+  {
+    cancel_cycles_ = number;
   }
   else if (key == "control_mode")
   {

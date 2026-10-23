@@ -15,13 +15,19 @@
 """Shared pieces for launch tests that run the mxA component on the test-only status fake."""
 
 import os
+import re
 import socket
 import sys
 import time
 
+import launch
+import launch_ros.actions
+import launch_testing.actions
 import xacro
 from ament_index_python.packages import get_package_share_directory
 from controller_manager_msgs.srv import ListHardwareComponents, SetHardwareComponentState
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from lifecycle_msgs.msg import State
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
@@ -39,6 +45,14 @@ FAKE_PLUGIN = (
     "<plugin>kuka_rsi_driver::KukaMxaRsiStatusFakeHardwareInterface</plugin>"
     f'<param name="mxa_status_fake_port">{FAKE_PORT}</param>'
 )
+
+# What on_deactivate logs once its requests are out.
+DEACTIVATION_LINE = re.compile(
+    r"Deactivation requests issued: stop packet replied to IPOC (\d+) "
+    r"\((\d+) RSI cycle\(s\) after the last read\), "
+    r"cancel and drives-off requested ([0-9.]+) ms after it"
+)
+STOP_COMPLETE_LINE = "Stop complete: RSI program cancelled and drives off"
 
 
 def robot_description():
@@ -60,6 +74,50 @@ def robot_description():
     return urdf.replace(PRODUCTION_PLUGIN, FAKE_PLUGIN)
 
 
+def fake_launch_description(update_rate=250):
+    """control_node on the fake, starting inactive, with robot_state_publisher and simulator."""
+    description = {"robot_description": robot_description()}
+
+    control_node = launch_ros.actions.Node(
+        package="kuka_drivers_core",
+        executable="control_node",
+        output="screen",
+        parameters=[
+            description,
+            {
+                "update_rate": update_rate,
+                "hardware_components_initial_state": {"inactive": [COMPONENT]},
+            },
+        ],
+    )
+
+    robot_state_publisher = launch_ros.actions.Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="screen",
+        parameters=[description],
+    )
+
+    simulator = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [
+                get_package_share_directory("kuka_rsi_simulator"),
+                "/launch/",
+                "kuka_rsi_simulator.launch.py",
+            ]
+        )
+    )
+
+    return launch.LaunchDescription(
+        [
+            control_node,
+            robot_state_publisher,
+            simulator,
+            launch_testing.actions.ReadyToTest(),
+        ]
+    )
+
+
 class LogCursor:
     """Matches only process output produced after the cursor was taken."""
 
@@ -67,14 +125,22 @@ class LogCursor:
         self._proc_output = proc_output
         self._start = len(list(proc_output))
 
+    def _new_text(self):
+        new_events = list(self._proc_output)[self._start :]  # noqa: E203
+        return "".join(event.text.decode(errors="replace") for event in new_events)
+
     def wait_for(self, text, timeout):
+        return self.wait_for_match(re.compile(re.escape(text)), timeout) is not None
+
+    def wait_for_match(self, pattern, timeout):
+        """Return the first match of a compiled regex in the new output, or None on timeout."""
         end = time.monotonic() + timeout
         while True:
-            new_events = list(self._proc_output)[self._start :]  # noqa: E203
-            if any(text in event.text.decode(errors="replace") for event in new_events):
-                return True
+            match = pattern.search(self._new_text())
+            if match is not None:
+                return match
             if time.monotonic() > end:
-                return False
+                return None
             time.sleep(0.05)
 
 
@@ -129,6 +195,31 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
 
+    def activate_and_stream(self, log, seconds=1.0):
+        """Inject EXT with drives on, activate, and let a few RSI cycles stream."""
+        self.inject(f"operation_mode={OP_MODE_EXT} drives_powered=1 motion_possible=1")
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activate refused")
+        self.assertTrue(log.wait_for(f"Successful 'activate' of hardware '{COMPONENT}'", 30))
+        self._spin_for(seconds)
+
+    def assert_deactivation_within_one_cycle(self, log):
+        """
+        Deactivate and check the driver's timing line against one RSI cycle.
+
+        The stop packet answers the RSI packet pending at entry (0 cycles) or the next one
+        (1 cycle); 2 would mean a packet went unanswered. stop_ipoc is read after the
+        cancel and drives-off requests, so this count also bounds that in-process work: the
+        read loop keeps advancing the ipoc concurrently, and the old blocking path (>=100 ms
+        of drives-off polling, or the fake's whole cancel at 12 ticks of 10 ms) would show up
+        as extra cycles here too.
+        """
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
+        match = log.wait_for_match(DEACTIVATION_LINE, timeout=5)
+        self.assertIsNotNone(match, "no deactivation timing line in the driver log")
+        cycles = int(match.group(2))
+        self.assertLessEqual(cycles, 1, f"stop packet sent {cycles} cycles after the last read")
+
     def publish_is_configured(self):
         """Tell control_node to run read() and write(): it only does so after this is true."""
         publisher = self.node.create_publisher(
@@ -148,10 +239,13 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
 
 __all__ = [
     "COMPONENT",
+    "DEACTIVATION_LINE",
     "FAKE_PORT",
     "OP_MODE_EXT",
     "OP_MODE_T1",
+    "STOP_COMPLETE_LINE",
     "LogCursor",
     "MxaStatusFakeTestCase",
+    "fake_launch_description",
     "robot_description",
 ]

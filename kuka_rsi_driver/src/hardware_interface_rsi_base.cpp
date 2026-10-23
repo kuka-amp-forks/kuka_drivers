@@ -251,6 +251,23 @@ KukaRSIHardwareInterfaceBase::export_command_interfaces()
 
 CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::State &)
 {
+  // The SDK client waits for a cancel in flight with no bound when it is destroyed.
+  if (runtime_state_.stop_pending && !runtime_state_.cancel_confirmed && robot_ptr_)
+  {
+    const auto deadline = std::chrono::steady_clock::now() + CLEANUP_CANCEL_TIMEOUT;
+    while (!robot_ptr_->IsRsiProgramCancelled() && std::chrono::steady_clock::now() < deadline)
+    {
+      std::this_thread::sleep_for(CLEANUP_CANCEL_CHECK_INTERVAL);
+    }
+    if (!robot_ptr_->IsRsiProgramCancelled())
+    {
+      RCLCPP_WARN(
+        logger_, "RSI program cancel not confirmed within %ld ms, releasing the client anyway",
+        static_cast<int64_t>(CLEANUP_CANCEL_TIMEOUT.count()));
+    }
+  }
+  runtime_state_.stop_pending = false;
+  runtime_state_.cancel_confirmed = false;
   robot_ptr_.reset();
   return CallbackReturn::SUCCESS;
 }
@@ -266,6 +283,10 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
   // Add short sleep to avoid RT thread eating CPU
   if (!runtime_state_.is_active)
   {
+    if (runtime_state_.stop_pending)
+    {
+      CheckStopComplete();
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     return return_type::OK;
   }
@@ -687,19 +708,29 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_lifecycle::State &)
 {
+  using kuka::external::control::ReturnCode;
+
+  const uint64_t entry_ipoc = diagnostics_state_.last_ipoc;
+  bool stop_sent = false;
   if (runtime_state_.msg_received)
   {
     RCLCPP_INFO(logger_, "Deactivating hardware interface by sending stop signal");
 
-    // StopControlling sometimes calls a blocking read, which could conflict with the read() method,
-    // but resource manager handles locking (resources_lock_), so is not necessary here
-    robot_ptr_->StopControlling();
+    // The plain RSI stop answers the pending or next RSI packet with the stop flag. The mxA
+    // override would follow it with the blocking cancel.
+    const auto stop_status =
+      robot_ptr_->kuka::external::control::kss::rsi::Robot::StopControlling();
+    stop_sent = stop_status.return_code == ReturnCode::OK;
+    if (!stop_sent)
+    {
+      RCLCPP_WARN(logger_, "Sending the RSI stop packet failed: %s", stop_status.message);
+    }
   }
   else
   {
     RCLCPP_INFO(logger_, "Message not received, but stop requested. Cancelling RSI program.");
     if (auto reset_status = robot_ptr_->ResetControlSignal();
-        reset_status.return_code != kuka::external::control::ReturnCode::OK)
+        reset_status.return_code != ReturnCode::OK)
     {
       RCLCPP_WARN(logger_, "Failed to reset control signal.");
     }
@@ -707,35 +738,73 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
     {
       RCLCPP_INFO(logger_, "%s", reset_status.message);
     }
-    robot_ptr_->CancelRsiProgram();
   }
+  const auto stop_time = std::chrono::steady_clock::now();
   runtime_state_.is_active = false;
   runtime_state_.msg_received = false;
+
+  runtime_state_.cancel_confirmed = false;
+  const auto cancel_status = robot_ptr_->RequestRsiProgramCancel();
+  if (cancel_status.return_code == ReturnCode::UNSUPPORTED)
+  {
+    // EKI has only the blocking cancel.
+    robot_ptr_->CancelRsiProgram();
+    runtime_state_.cancel_confirmed = true;
+  }
+  else if (cancel_status.return_code != ReturnCode::OK)
+  {
+    RCLCPP_WARN(logger_, "Requesting the RSI program cancel failed: %s", cancel_status.message);
+  }
+
   if (control_state_.status_manager.DrivesPowered())
   {
     RCLCPP_INFO(logger_, "Turning off drives");
     robot_ptr_->TurnOffDrives();
+  }
+  runtime_state_.stop_pending = true;
+  runtime_state_.stop_pending_reads = 0;
+  runtime_state_.stop_pending_start = std::chrono::steady_clock::now();
 
-    // Wait for drives to be powered off
-    auto start_time = std::chrono::steady_clock::now();
-    while (control_state_.status_manager.DrivesPowered())
-    {
-      if (
-        std::chrono::steady_clock::now() - start_time >
-        KukaRSIHardwareInterfaceBase::DRIVES_POWERED_TIMEOUT)
-      {
-        RCLCPP_ERROR(logger_, "Timeout waiting for drives to power off. Check robot state.");
-        // Return success, as drives off signal is not received in Office mode for iiQKA.OS2
-        control_state_.status_manager.UpdateStateInterfaces();
-        return CallbackReturn::SUCCESS;
-      }
-      control_state_.status_manager.UpdateStateInterfaces();
-      std::this_thread::sleep_for(KukaRSIHardwareInterfaceBase::DRIVES_POWERED_CHECK_INTERVAL);
-    }
-    RCLCPP_INFO(logger_, "Drives successfully powered off");
+  const double after_stop_ms =
+    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stop_time).count();
+  if (stop_sent)
+  {
+    const uint64_t stop_ipoc = robot_ptr_->getIpoc();
+    RCLCPP_INFO(
+      logger_,
+      "Deactivation requests issued: stop packet replied to IPOC %lu (%lu RSI cycle(s) after the "
+      "last read), cancel and drives-off requested %.3f ms after it",
+      stop_ipoc, stop_ipoc - entry_ipoc, after_stop_ms);
+  }
+  else
+  {
+    RCLCPP_INFO(
+      logger_,
+      "Deactivation requests issued without a stop packet: cancel and drives-off requested in "
+      "%.3f ms",
+      after_stop_ms);
   }
 
   return CallbackReturn::SUCCESS;
+}
+
+void KukaRSIHardwareInterfaceBase::CheckStopComplete()
+{
+  runtime_state_.stop_pending_reads++;
+  if (!runtime_state_.cancel_confirmed && robot_ptr_->IsRsiProgramCancelled())
+  {
+    runtime_state_.cancel_confirmed = true;
+  }
+  if (runtime_state_.cancel_confirmed && !control_state_.status_manager.DrivesPowered())
+  {
+    const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - runtime_state_.stop_pending_start);
+    RCLCPP_INFO(
+      logger_,
+      "Stop complete: RSI program cancelled and drives off, %ld ms (%lu reads) after deactivation",
+      elapsed_ms.count(), runtime_state_.stop_pending_reads);
+    runtime_state_.stop_pending = false;
+  }
 }
 
 void KukaRSIHardwareInterfaceBase::Write()
