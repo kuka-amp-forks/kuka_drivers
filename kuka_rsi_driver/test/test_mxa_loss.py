@@ -85,14 +85,14 @@ class TestMxaLoss(RsiFaultTestCase):
         # Runs after the loss test, with the component active and JTC active.
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
         log = LogCursor(proc_output)
-        self.inject("stall")
-        self.assertTrue(log.wait_for("mxA status fake: stream stalled", timeout=5))
+        self.inject("freeze_status")
+        self.assertTrue(log.wait_for("mxA status fake: status frozen", timeout=5))
         self._spin_for(UNCHANGED_S)
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
         self.assertIsNone(log.wait_for_match(MXA_LOSS_LINE, timeout=0.1), "idle stream errored")
         self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
 
-        self.inject("resume")
+        self.inject("unfreeze_status")
         self.switch(deactivate=[JTC])
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")

@@ -37,10 +37,10 @@ namespace kuka_rsi_driver
 // Test stand-in for kss::mxa::Robot. Keeps the plain RSI stream and replaces the mxA link
 // with a loopback UDP socket that tests write status updates to, one text datagram each:
 //   "<field>=<int> ..."  fields of kss::StatusUpdate, e.g. "emergency_stop=1 operation_mode=4"
-//   "stall" / "resume"   withhold or restart status delivery; telegrams keep arriving
+//   "freeze_status" / "unfreeze_status"   withhold or restart status delivery; telegrams keep arriving
 //   "link_down" / "link_up"  stop or restart the telegram stream itself
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
-//   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while stalled
+//   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while status is frozen
 //   "drives_stuck=<0|1>"  while set, drives-on and drives-off requests leave drives_powered as is
 //   "send_fail=<0|1>"    while set, SendControlSignal fails without sending
 //   "report"             log rsi_running, cancel_pending, cancelled and drives_powered
@@ -91,7 +91,7 @@ private:
   mutable std::mutex mtx_;
   StatusUpdate status_;
   StatusUpdate delivered_;
-  bool stalled_ = false;
+  bool status_frozen_ = false;
   bool link_down_ = false;
   bool drives_stuck_ = false;
   uint64_t telegrams_ = 0;

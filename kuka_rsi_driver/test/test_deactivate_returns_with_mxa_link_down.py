@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A stop pending on a stalled stream waits; losing the link while INACTIVE errors instead."""
+"""A stop pending on a frozen status stream waits; losing the link while INACTIVE errors instead."""
 
 import os
 import sys
@@ -48,7 +48,7 @@ class TestDeactivateReturnsWithMxaLinkDown(MxaStatusFakeTestCase):
         self.activate_and_stream(log)
 
         log = LogCursor(proc_output)
-        self.inject("stall")
+        self.inject("freeze_status")
         self.assert_deactivation_within_one_cycle(log)
 
         # With the status withheld neither the cancel nor the drives-off can be confirmed.

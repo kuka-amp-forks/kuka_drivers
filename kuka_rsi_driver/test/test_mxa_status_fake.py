@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Injected mxA status gates activation of the mxA component, and a stalled stream withholds it."""
+"""Injected mxA status gates activation of the mxA component, and a frozen status stream withholds it."""
 
 import os
 import sys
@@ -93,7 +93,7 @@ class TestMxaStatusFake(MxaStatusFakeTestCase):
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         self.publish_is_configured()
         self.inject(
-            "resume emergency_stop=0 guard_stop=0 "
+            "unfreeze_status emergency_stop=0 guard_stop=0 "
             f"operation_mode={OP_MODE_EXT} drives_powered=0 motion_possible=1"
         )
 
@@ -113,22 +113,22 @@ class TestMxaStatusFake(MxaStatusFakeTestCase):
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
         self.assertTrue(log.wait_for("KRC not in EXT", timeout=5))
 
-    def test_stalled_stream_withholds_status(self, proc_output):
+    def test_frozen_status_stream_withholds_status(self, proc_output):
         log = LogCursor(proc_output)
         self.inject(f"operation_mode={OP_MODE_T1}")
-        self.inject("stall")
-        self.assertTrue(log.wait_for("mxA status fake: stream stalled", timeout=5))
+        self.inject("freeze_status")
+        self.assertTrue(log.wait_for("mxA status fake: status frozen", timeout=5))
         self.inject(f"operation_mode={OP_MODE_EXT}")
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
         self.assertTrue(log.wait_for("KRC not in EXT", timeout=5))
 
-    def test_resume_delivers_status_and_activates(self, proc_output, proc_info):
+    def test_unfreeze_status_delivers_status_and_activates(self, proc_output, proc_info):
         log = LogCursor(proc_output)
         self.inject(f"operation_mode={OP_MODE_T1}")
-        self.inject("stall")
+        self.inject("freeze_status")
         self.inject(f"operation_mode={OP_MODE_EXT}")
-        self.inject("resume")
-        self.assertTrue(log.wait_for("mxA status fake: stream resumed", timeout=5))
+        self.inject("unfreeze_status")
+        self.assertTrue(log.wait_for("mxA status fake: status unfrozen", timeout=5))
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_ACTIVE))
         self.assertTrue(log.wait_for("Drives successfully powered on", timeout=5))
         self.assertTrue(log.wait_for(f"Successful 'activate' of hardware '{COMPONENT}'", 30))

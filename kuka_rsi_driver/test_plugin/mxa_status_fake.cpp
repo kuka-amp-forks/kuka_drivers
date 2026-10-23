@@ -121,7 +121,7 @@ MxaStatusFake::Status MxaStatusFake::SendControlSignal()
   return kuka::external::control::kss::rsi::Robot::SendControlSignal();
 }
 
-// Blocking form, like the SDK: no bound, so it never returns while stalled.
+// Blocking form, like the SDK: no bound, so it never returns while status is frozen.
 MxaStatusFake::Status MxaStatusFake::CancelRsiProgram()
 {
   RequestRsiProgramCancel();
@@ -219,7 +219,7 @@ void MxaStatusFake::Serve()
       status_handler_->OnTelegramReceived();
     }
     // Like the SDK, the cancel only progresses on a live link.
-    if (!stalled_ && !link_down_ && cancel_pending_ > 0 && --cancel_pending_ == 0)
+    if (!status_frozen_ && !link_down_ && cancel_pending_ > 0 && --cancel_pending_ == 0)
     {
       cancelled_ = true;
       cancel_cv_.notify_all();
@@ -247,16 +247,16 @@ void MxaStatusFake::Apply(const std::string & datagram)
 bool MxaStatusFake::ApplyToken(const std::string & token)
 {
   std::lock_guard<std::mutex> lk{mtx_};
-  if (token == "stall")
+  if (token == "freeze_status")
   {
-    stalled_ = true;
-    RCLCPP_INFO(logger_, "mxA status fake: stream stalled after %" PRIu64 " telegrams", telegrams_);
+    status_frozen_ = true;
+    RCLCPP_INFO(logger_, "mxA status fake: status frozen after %" PRIu64 " telegrams", telegrams_);
     return true;
   }
-  if (token == "resume")
+  if (token == "unfreeze_status")
   {
-    stalled_ = false;
-    RCLCPP_INFO(logger_, "mxA status fake: stream resumed");
+    status_frozen_ = false;
+    RCLCPP_INFO(logger_, "mxA status fake: status unfrozen");
     return true;
   }
   if (token == "link_down")
@@ -384,7 +384,7 @@ void MxaStatusFake::SetDrivesPowered(bool powered)
 void MxaStatusFake::Dispatch()
 {
   std::lock_guard<std::mutex> lk{mtx_};
-  if (stalled_ || link_down_ || !status_handler_)
+  if (status_frozen_ || link_down_ || !status_handler_)
   {
     return;
   }

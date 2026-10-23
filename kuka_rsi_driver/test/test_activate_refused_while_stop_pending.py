@@ -56,7 +56,7 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
         super().setUp()
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         self.publish_is_configured()
-        self.inject(f"resume drives_stuck=0 cancel_cycles={CANCEL_CYCLES}")
+        self.inject(f"unfreeze_status drives_stuck=0 cancel_cycles={CANCEL_CYCLES}")
 
     def deactivate_then_activate_at_once(self, log):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
@@ -88,7 +88,7 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
     def test_stop_pending_holds_while_cancel_unconfirmed(self, proc_output):
         log = LogCursor(proc_output)
         self.activate_and_stream(log)
-        self.inject("stall")
+        self.inject("freeze_status")
 
         log = LogCursor(proc_output)
         self.deactivate_then_activate_at_once(log)
@@ -108,7 +108,7 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
         )
 
         log = LogCursor(proc_output)
-        self.inject("resume")
+        self.inject("unfreeze_status")
         self.assertTrue(log.wait_for(STOP_COMPLETE_LINE, timeout=5), "stop never completed")
         self.activate_after_stop(log)
         self.finish(log)
