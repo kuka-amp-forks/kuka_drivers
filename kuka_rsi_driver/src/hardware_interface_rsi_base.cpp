@@ -635,7 +635,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     if (runtime_state_.stop_pending)
     {
       RCLCPP_ERROR(
-        logger_, "Activation refused: stop pending, RSI program cancel %s, drives %s",
+        logger_, "Activation failed: stop pending, RSI program cancel %s, drives %s",
         runtime_state_.cancel_confirmed ? "confirmed" : "not confirmed",
         control_state_.status_manager.DrivesPowered() ? "still powered" : "off");
       return CallbackReturn::FAILURE;
@@ -644,13 +644,13 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 
   if (control_state_.status_manager.IsEmergencyStopActive())
   {
-    RCLCPP_ERROR(logger_, "Activation refused: Emergency stop is active");
+    RCLCPP_ERROR(logger_, "Activation failed: Emergency stop is active");
     return CallbackReturn::FAILURE;
   }
 
   if (!control_state_.status_manager.IsKrcInExtMode())
   {
-    RCLCPP_ERROR(logger_, "Activation refused: KRC not in EXT");
+    RCLCPP_ERROR(logger_, "Activation failed: KRC not in EXT");
     return CallbackReturn::FAILURE;
   }
 

@@ -57,7 +57,7 @@ DEACTIVATION_LINE = re.compile(
 )
 STOP_COMPLETE_LINE = "Stop complete: RSI program cancelled and drives off"
 STOP_COMPLETE_DRIVES_ON_LINE = "Stop complete: RSI program cancelled, drives still report powered"
-STOP_PENDING_REFUSAL = "Activation refused: stop pending"
+STOP_PENDING_FAILURE = "Activation failed: stop pending"
 FIRST_PACKET_FAILURE = "Activation failed: no RSI packet within"
 RECEIVED_FIRST_PACKET = "Received position data from robot controller"
 FAKE_CANCEL_REQUESTED = "mxA status fake: RSI program cancel requested"
@@ -299,7 +299,7 @@ __all__ = [
     "SIMULATOR_CYCLE_MS",
     "STOP_COMPLETE_DRIVES_ON_LINE",
     "STOP_COMPLETE_LINE",
-    "STOP_PENDING_REFUSAL",
+    "STOP_PENDING_FAILURE",
     "LogCursor",
     "MxaStatusFakeTestCase",
     "fake_launch_description",

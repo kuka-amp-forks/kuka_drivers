@@ -67,12 +67,12 @@ class TestOnActivateRefusesWhenNotReady(MxaStatusFakeTestCase):
     def test_estop_refused_at_once(self, proc_output):
         log = LogCursor(proc_output)
         self.inject(f"emergency_stop=1 operation_mode={OP_MODE_EXT} drives_powered=1")
-        self.assert_refused_at_once(log, "Activation refused: Emergency stop is active")
+        self.assert_refused_at_once(log, "Activation failed: Emergency stop is active")
 
     def test_non_ext_refused_at_once(self, proc_output):
         log = LogCursor(proc_output)
         self.inject(f"emergency_stop=0 operation_mode={OP_MODE_T1} drives_powered=1")
-        self.assert_refused_at_once(log, "Activation refused: KRC not in EXT")
+        self.assert_refused_at_once(log, "Activation failed: KRC not in EXT")
 
     def test_drives_not_powered_refused_within_bound(self, proc_output):
         log = LogCursor(proc_output)

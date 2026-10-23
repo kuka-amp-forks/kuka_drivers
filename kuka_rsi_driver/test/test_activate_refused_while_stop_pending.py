@@ -29,7 +29,7 @@ from mxa_status_fake_support import (  # noqa: E402
     OP_MODE_EXT,
     STOP_COMPLETE_DRIVES_ON_LINE,
     STOP_COMPLETE_LINE,
-    STOP_PENDING_REFUSAL,
+    STOP_PENDING_FAILURE,
     LogCursor,
     MxaStatusFakeTestCase,
     fake_launch_description,
@@ -61,7 +61,7 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
     def deactivate_then_activate_at_once(self, log):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activated")
-        self.assertTrue(log.wait_for(STOP_PENDING_REFUSAL, timeout=5), "cause not named")
+        self.assertTrue(log.wait_for(STOP_PENDING_FAILURE, timeout=5), "cause not named")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
 
     def activate_after_stop(self, log):
@@ -104,7 +104,7 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
         log = LogCursor(proc_output)
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activated")
         self.assertTrue(
-            log.wait_for(f"{STOP_PENDING_REFUSAL}, RSI program cancel not confirmed", 5)
+            log.wait_for(f"{STOP_PENDING_FAILURE}, RSI program cancel not confirmed", 5)
         )
 
         log = LogCursor(proc_output)
