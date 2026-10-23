@@ -104,26 +104,15 @@ private:
 class StatusUpdateHandler : public kuka::external::control::kss::IStatusUpdateHandler
 {
 public:
-  StatusUpdateHandler(KukaRSIHardwareInterfaceBase * hw_interface, StatusManager * status_manager)
-  : hw_interface_{hw_interface}, status_manager_{status_manager}, first_update_{true}
-  {
-  }
+  explicit StatusUpdateHandler(StatusManager * status_manager) : status_manager_{status_manager} {}
 
   void OnStatusUpdateReceived(const kuka::external::control::kss::StatusUpdate & update) override
   {
-    if (first_update_)
-    {
-      hw_interface_->initialize_command_interfaces(
-        static_cast<kuka_drivers_core::ControlMode>(update.control_mode_), update.cycle_time_);
-      first_update_ = false;
-    }
     status_manager_->SetStatusInterfaces(update);
   }
 
 private:
-  KukaRSIHardwareInterfaceBase * hw_interface_;
   StatusManager * status_manager_;
-  bool first_update_;
 };
 
 }  // namespace kuka_rsi_driver

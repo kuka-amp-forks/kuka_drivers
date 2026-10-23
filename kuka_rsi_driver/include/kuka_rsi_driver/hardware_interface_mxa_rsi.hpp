@@ -50,9 +50,6 @@ public:
     const hardware_interface::HardwareComponentInterfaceParams & params) override;
 
   KUKA_RSI_DRIVER_PUBLIC
-  std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
-
-  KUKA_RSI_DRIVER_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
 
   KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_configure(const rclcpp_lifecycle::State &) override;
@@ -68,12 +65,13 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC void mxa_init(const InitializationData &);
 
-private:
-  KUKA_RSI_DRIVER_LOCAL void Read(const int64_t request_timeout) override;
+protected:
+  KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout) override;
 
   KUKA_RSI_DRIVER_LOCAL void CreateRobotInstance(
     const kuka::external::control::kss::Configuration &) override;
 
+private:
   InitSequenceReport init_report_;
   std::mutex init_mtx_;
   std::condition_variable init_cv_;

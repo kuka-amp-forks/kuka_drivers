@@ -85,17 +85,13 @@ RobotManagerBase::RobotManagerBase() : kuka_drivers_core::ROS2BaseLCNode("robot_
   set_param_client_ = this->create_client<rcl_interfaces::srv::SetParameters>(
     "controller_manager/set_parameters", rclcpp::SystemDefaultsQoS(), cbg_);
 
-  // Publisher for sending cycle_time to KssMessageHandler
-  cycle_time_pub_ = this->create_publisher<std_msgs::msg::UInt8>(
-    "kss_message_handler/cycle_time", rclcpp::SystemDefaultsQoS());
-
   // Use the provided value to initialize the member (prevents unused-parameter warning)
   this->registerParameter<int>(
     "cycle_time", 1, kuka_drivers_core::ParameterSetAccessRights{true, true},
     [this](int cycle_time)
     {
       // Set default cycle time (from parameter)
-      return ValidateCycleTime(static_cast<CycleTime>(cycle_time));  // 1 => 4ms, 2 => 12ms
+      return ValidateCycleTime(static_cast<CycleTime>(cycle_time));  // 1 => 4 ms, the only one
     });
 }
 
@@ -131,10 +127,6 @@ RobotManagerBase::configure_driver(const std::vector<std::string> & controllers_
   is_configured_pub_->on_activate();
   is_configured_msg_.data = true;
   is_configured_pub_->publish(is_configured_msg_);
-
-  std_msgs::msg::UInt8 msg;
-  msg.data = static_cast<uint8_t>(cycle_time_);
-  cycle_time_pub_->publish(msg);
 
   return SUCCESS;
 }
@@ -374,12 +366,12 @@ bool RobotManagerBase::ValidateCycleTime(CycleTime cycle_time)
     return false;
   }
 
-  if (cycle_time != CycleTime::RSI_4MS && cycle_time != CycleTime::RSI_12MS)
+  // The hardware components run RSI at a fixed 4 ms.
+  if (cycle_time != CycleTime::RSI_4MS)
   {
     RCLCPP_ERROR(
-      get_logger(), "Invalid cycle time requested: %s. Valid options are %s and %s.",
-      CycleTimeToString(cycle_time), CycleTimeToString(CycleTime::RSI_4MS),
-      CycleTimeToString(CycleTime::RSI_12MS));
+      get_logger(), "Invalid cycle time requested: %s. The only supported cycle time is %s.",
+      CycleTimeToString(cycle_time), CycleTimeToString(CycleTime::RSI_4MS));
     return false;
   }
 
@@ -392,14 +384,6 @@ bool RobotManagerBase::ValidateCycleTime(CycleTime cycle_time)
     return true;
   }
 
-  std_msgs::msg::UInt8 msg;
-  msg.data = static_cast<uint8_t>(cycle_time);
-
-  RCLCPP_INFO(
-    this->get_logger(), "Publishing cycle_time  %s on kss_message_handler/cycle_time",
-    CycleTimeToString(cycle_time));
-
-  cycle_time_pub_->publish(msg);
   cycle_time_ = cycle_time;
   return true;
 }

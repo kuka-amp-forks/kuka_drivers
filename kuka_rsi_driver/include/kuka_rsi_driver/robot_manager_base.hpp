@@ -26,7 +26,6 @@
 #include "rclcpp/client.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "std_msgs/msg/u_int8.hpp"
 
 #include "kuka_drivers_core/controller_handler.hpp"
 #include "kuka_drivers_core/ros2_base_lc_node.hpp"
@@ -123,7 +122,6 @@ protected:
   rclcpp::Subscription<kuka_driver_interfaces::msg::HardwareEvent>::SharedPtr event_subscriber_;
 
   // publisher and backing field for cycle time
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr cycle_time_pub_;
   CycleTime cycle_time_{CycleTime::UNDEFINED};  // 1 => 4 ms (RSI_4MS), 2 => 12 ms (RSI_12MS)
 
   static constexpr int HARDWARE_ACTIVATION_TIMEOUT_MS = 15'000;

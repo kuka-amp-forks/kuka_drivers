@@ -15,7 +15,6 @@
   <depend>controller_interface</depend>
   <depend>pluginlib</depend>
   <depend>kuka_drivers_core</depend>
-  <depend>std_msgs</depend>
   <depend>generate_parameter_library</depend>
 
   <export>
