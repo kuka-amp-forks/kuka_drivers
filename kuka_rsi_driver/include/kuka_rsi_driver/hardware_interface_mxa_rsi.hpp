@@ -65,12 +65,13 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC void mxa_init(const InitializationData &);
 
-private:
-  KUKA_RSI_DRIVER_LOCAL void Read(const int64_t request_timeout) override;
+protected:
+  KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout) override;
 
   KUKA_RSI_DRIVER_LOCAL void CreateRobotInstance(
     const kuka::external::control::kss::Configuration &) override;
 
+private:
   InitSequenceReport init_report_;
   std::mutex init_mtx_;
   std::condition_variable init_cv_;
