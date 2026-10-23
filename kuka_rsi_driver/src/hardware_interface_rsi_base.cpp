@@ -825,14 +825,14 @@ void KukaRSIHardwareInterfaceBase::RequestStop()
     robot_ptr_->TurnOffDrives();
   }
   runtime_state_.stop_pending = true;
-  runtime_state_.stop_pending_cycles = 0;
+  runtime_state_.stop_pending_reads = 0;
   runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
   runtime_state_.stop_timeout_reported = false;
 }
 
 void KukaRSIHardwareInterfaceBase::CheckStopComplete()
 {
-  runtime_state_.stop_pending_cycles++;
+  runtime_state_.stop_pending_reads++;
   if (!runtime_state_.cancel_confirmed && robot_ptr_->IsRsiProgramCancelled())
   {
     runtime_state_.cancel_confirmed = true;
@@ -843,9 +843,8 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
       std::chrono::steady_clock::now() - runtime_state_.stop_requested_time);
     RCLCPP_INFO(
       logger_,
-      "Stop complete: RSI program cancelled and drives off, %ld ms (%lu read cycles) after "
-      "deactivation",
-      elapsed_ms.count(), runtime_state_.stop_pending_cycles);
+      "Stop complete: RSI program cancelled and drives off, %ld ms (%lu reads) after deactivation",
+      elapsed_ms.count(), runtime_state_.stop_pending_reads);
     runtime_state_.stop_pending = false;
     return;
   }
@@ -862,7 +861,7 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
       logger_,
       "Stop complete: RSI program cancelled, drives still report powered after %ld ms (%lu read "
       "cycles)",
-      timeout_ms, runtime_state_.stop_pending_cycles);
+      timeout_ms, runtime_state_.stop_pending_reads);
     runtime_state_.stop_pending = false;
   }
   else if (!runtime_state_.stop_timeout_reported)

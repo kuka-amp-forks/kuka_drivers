@@ -46,9 +46,6 @@ FAKE_PLUGIN = (
     f'<param name="mxa_status_fake_port">{FAKE_PORT}</param>'
 )
 
-# The RSI simulator's cycle, the RSI cycle the CI tests run at.
-SIMULATOR_CYCLE_MS = 40.0
-
 # What on_deactivate logs once its requests are out.
 DEACTIVATION_LINE = re.compile(
     r"Deactivation requests issued: stop packet replied to IPOC (\d+) "
@@ -251,23 +248,18 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         Deactivate and check the driver's timing line against one RSI cycle.
 
         The stop packet answers the RSI packet pending at entry (0 cycles) or the next one
-        (1 cycle); 2 would mean a packet went unanswered. Everything after the stop packet
-        is in-process work of about 0.1 ms, bounded here by the simulator's 40 ms cycle: the
-        old path spent at least 100 ms there (the drives-off poll interval) or the fake's
-        whole cancel (12 ticks of 10 ms), so the bound separates the two paths by 2.5x
-        while leaving 400x headroom for a slow runner.
+        (1 cycle); 2 would mean a packet went unanswered. stop_ipoc is read after the
+        cancel and drives-off requests, so this count also bounds that in-process work: the
+        read loop keeps advancing the ipoc concurrently, and the old blocking path (>=100 ms
+        of drives-off polling, or the fake's whole cancel at 12 ticks of 10 ms) would show up
+        as extra cycles here too.
         """
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
         match = log.wait_for_match(DEACTIVATION_LINE, timeout=5)
         self.assertIsNotNone(match, "no deactivation timing line in the driver log")
-        cycles, after_stop_ms = int(match.group(2)), float(match.group(3))
+        cycles = int(match.group(2))
         self.assertLessEqual(cycles, 1, f"stop packet sent {cycles} cycles after the last read")
-        self.assertLess(
-            after_stop_ms,
-            SIMULATOR_CYCLE_MS,
-            f"cancel and drives-off took {after_stop_ms} ms after the stop packet",
-        )
 
     def publish_is_configured(self):
         """Tell control_node to run read() and write(): it only does so after this is true."""
@@ -296,7 +288,6 @@ __all__ = [
     "OP_MODE_EXT",
     "OP_MODE_T1",
     "RECEIVED_FIRST_PACKET",
-    "SIMULATOR_CYCLE_MS",
     "STOP_COMPLETE_DRIVES_ON_LINE",
     "STOP_COMPLETE_LINE",
     "STOP_PENDING_FAILURE",
