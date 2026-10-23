@@ -501,6 +501,8 @@ class RSISimulator(Node):
     def timer_callback(self):
         if self.dropped_packet_remaining_ > 0:
             self.dropped_packet_remaining_ -= 1
+            # IPOC keeps advancing while packets are dropped.
+            self.ipoc += 1
             self.get_logger().warning("Dropped packet injected")
             return
 

@@ -137,17 +137,19 @@ class FaultInjectionTestCase(unittest.TestCase):
 
     def test_simulator_injects_dropped_packet(self):
         self._run_cycles(3)
-        before = len(self.states)
+        before_count = len(self.states)
+        before_ipoc = self.states[-1]
         self._set_fault("fault_dropped_packet_count", 2)
 
         # The dropped cycles publish nothing: the count doesn't move.
         self._run_cycles(2)
-        self.assertEqual(len(self.states), before)
+        self.assertEqual(len(self.states), before_count)
 
-        # Normal sending resumes on the next cycle, IPOCs stay contiguous.
+        # Normal sending resumes on the next cycle; like a real controller, the
+        # IPOC has jumped by one per dropped cycle instead of staying contiguous.
         self._run_cycles(1)
-        self.assertEqual(len(self.states), before + 1)
-        self._assert_contiguous()
+        self.assertEqual(len(self.states), before_count + 1)
+        self.assertEqual(self.states[-1], before_ipoc + 2 + 1)
 
     def test_simulator_injects_repeated_ipoc(self):
         self._run_cycles(3)

@@ -387,7 +387,7 @@ driver is active:
 | Parameter | Default | Unit | Effect |
 |---|---|---|---|
 | `fault_late_packet_cycles` | `0` | cycles | Delays the next state send by N cycles, then resumes; the IPOC sequence stays contiguous. |
-| `fault_dropped_packet_count` | `0` | cycles | Skips sending the next K states entirely, then resumes. |
+| `fault_dropped_packet_count` | `0` | cycles | Skips sending the next K states entirely, then resumes; the IPOC advances once per skipped cycle, as on a real controller. |
 | `fault_repeated_ipoc_count` | `0` | cycles | Sends the current IPOC again for K more cycles instead of incrementing it. |
 
 Each parameter re-arms on every set; a value is consumed (reset to its effect,
