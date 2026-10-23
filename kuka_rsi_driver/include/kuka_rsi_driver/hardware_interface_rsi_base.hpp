@@ -102,6 +102,9 @@ protected:
   KUKA_RSI_DRIVER_LOCAL kuka::external::control::kss::GPIOConfiguration ParseGPIOConfig(
     const hardware_interface::InterfaceInfo & info);
 
+  // Reads configure_timeout_ms; false when it is set but not a positive integer.
+  KUKA_RSI_DRIVER_LOCAL bool ReadConfigureTimeout();
+
   struct InitSequenceReport
   {
     bool sequence_complete = false;
@@ -180,6 +183,10 @@ protected:
   static constexpr std::chrono::seconds DRIVES_POWERED_TIMEOUT{3};
   static constexpr std::chrono::milliseconds DRIVES_POWERED_CHECK_INTERVAL{100};
   static constexpr int64_t READ_TIMEOUT_MS = 1'000;
+
+  // Bound on the wait for the controller's initialization report in on_configure.
+  static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};
+  std::chrono::milliseconds configure_timeout_{DEFAULT_CONFIGURE_TIMEOUT};
 
   // Fixed cycle time and control mode for this driver version.
   static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;

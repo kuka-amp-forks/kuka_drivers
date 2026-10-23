@@ -44,6 +44,11 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_init(
   RCLCPP_INFO(
     logger_, "Robot model verification: %s", verify_robot_model_ ? "enabled" : "disabled");
 
+  if (!ReadConfigureTimeout())
+  {
+    return CallbackReturn::ERROR;
+  }
+
   return CallbackReturn::SUCCESS;
 }
 
@@ -68,6 +73,11 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   eki_config.client_ip = info_.hardware_parameters.at("client_ip");
   eki_config.client_port = std::stoi(info_.hardware_parameters.at("client_port"));
 
+  {
+    std::lock_guard<std::mutex> lk{init_mtx_};
+    init_report_ = {};
+  }
+
   if (!SetupRobot(
         eki_config, std::make_unique<EventObserver>(this),
         std::make_unique<EkiEventHandlerExtension>(this)))
@@ -89,7 +99,15 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
 
   // Wait for the response to arrive from the controller
   std::unique_lock<std::mutex> lk{init_mtx_};
-  init_cv_.wait(lk, [this] { return init_report_.sequence_complete; });
+  if (!init_cv_.wait_for(lk, configure_timeout_, [this] { return init_report_.sequence_complete; }))
+  {
+    lk.unlock();
+    RCLCPP_ERROR_STREAM(
+      logger_, "No initialization report from the EKI server at "
+                 << eki_config.kli_ip_address << " within " << configure_timeout_.count() << " ms");
+    robot_ptr_.reset();
+    return CallbackReturn::FAILURE;
+  }
 
   if (verify_robot_model_)
   {

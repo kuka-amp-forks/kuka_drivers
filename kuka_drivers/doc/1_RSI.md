@@ -60,6 +60,12 @@ The parameters in the driver configuration file can be changed during runtime us
 - `position_controller_name`: The name of the controller (string) that controls the `position` interface of the robot. It can't be changed in active state.
 - `cycle_time`: The cycle time of RSI communication. Only 1 (4 ms) is accepted: the hardware interface runs RSI at a fixed 4 ms.
 
+### Hardware parameters
+
+Besides the parameters the launch arguments set (`controller_ip`, `client_ip`, `client_port`, `mxa_client_port`, `verify_robot_model`, `rsi_xml_config_file`), the `<hardware>` block of the `ros2_control` description accepts:
+
+- `configure_timeout_ms`: how long `on_configure` of the `eki_rsi` and `mxa_rsi` hardware interfaces waits for the controller's initialization report before it fails, in milliseconds (positive integer, defaults to 1500). On expiry the component stays `unconfigured`, the connection is released and the error names the bound and the controller IP, so `configure` can be requested again. Set it in the `<hardware>` block of your own `ros2_control` xacro, for example `<param name="configure_timeout_ms">5000</param>`.
+
 ### I/O configuration
 
 iiQKA.OS2 supports inputs and outputs for real-time usage through RSI. The I/Os are defined from the robot controller's point of view: an `input` can only have state interfaces in ROS Control, while an `output` can have both state and command interfaces.
