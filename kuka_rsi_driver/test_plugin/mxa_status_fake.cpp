@@ -78,8 +78,15 @@ MxaStatusFake::Status MxaStatusFake::Setup()
   return kuka::external::control::kss::rsi::Robot::Setup();
 }
 
-MxaStatusFake::Status MxaStatusFake::StartControlling(kuka::external::control::ControlMode)
+MxaStatusFake::Status MxaStatusFake::StartControlling(kuka::external::control::ControlMode mode)
 {
+  if (mode != kuka::external::control::ControlMode::JOINT_POSITION_CONTROL)
+  {
+    std::ostringstream msg;
+    msg << "mxA status fake: refusing control mode " << static_cast<int>(mode)
+        << ", only JOINT_POSITION_CONTROL is supported";
+    return {ReturnCode::ERROR, msg.str().c_str()};
+  }
   rsi_running_ = true;
   std::lock_guard<std::mutex> lk{mtx_};
   if (event_handler_)
@@ -118,8 +125,15 @@ MxaStatusFake::Status MxaStatusFake::TurnOffDrives()
   return {ReturnCode::OK};
 }
 
-MxaStatusFake::Status MxaStatusFake::SetCycleTime(kuka::external::control::kss::CycleTime)
+MxaStatusFake::Status MxaStatusFake::SetCycleTime(kuka::external::control::kss::CycleTime cycle_time)
 {
+  if (cycle_time != kuka::external::control::kss::CycleTime::RSI_4MS)
+  {
+    std::ostringstream msg;
+    msg << "mxA status fake: refusing cycle time "
+        << kuka::external::control::kss::CycleTimeToString(cycle_time) << ", only 4 ms is supported";
+    return {ReturnCode::ERROR, msg.str().c_str()};
+  }
   return {ReturnCode::OK, "Cycle time set"};
 }
 
