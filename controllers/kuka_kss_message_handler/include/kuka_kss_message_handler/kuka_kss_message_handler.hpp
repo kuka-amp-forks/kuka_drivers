@@ -16,7 +16,6 @@
 #define KUKA_KSS_MESSAGE_HANDLER__KUKA_KSS_MESSAGE_HANDLER_HPP_
 
 #include <array>
-#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -24,7 +23,6 @@
 
 #include "controller_interface/controller_interface.hpp"
 #include "std_msgs/msg/bool.hpp"
-#include "std_msgs/msg/u_int8.hpp"
 
 #include "kuka_driver_interfaces/msg/kss_status.hpp"
 #include "kuka_driver_interfaces/msg/kss_status_array.hpp"
@@ -109,16 +107,9 @@ private:
       state_interface.get_optional().value_or(static_cast<double>(fallback_value)));
   }
 
-  KUKA_KSS_MESSAGE_HANDLER_LOCAL void RsiCycleTimeChangedCallback(
-    const std_msgs::msg::UInt8::SharedPtr msg);
-
   using Params = kuka_kss_message_handler::Params;
   using ParamListener = kuka_kss_message_handler::ParamListener;
   Params params_;
-
-  // Cycle time
-  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr cycle_time_subscription_;
-  std::atomic<double> cycle_time_;
 
   std::shared_ptr<realtime_tools::RealtimePublisher<kuka_driver_interfaces::msg::KssStatusArray>>
     status_publisher_;
@@ -130,7 +121,6 @@ private:
   static constexpr size_t STATE_INTERFACE_COUNT = STATE_INTERFACE_NAMES.size();
 
   static constexpr size_t STATUS_PUBLISH_TICK_COUNT = 50;
-  static constexpr int WARN_THROTTLE_DURATION_MS = 1000;
 };
 
 }  // namespace kuka_controllers

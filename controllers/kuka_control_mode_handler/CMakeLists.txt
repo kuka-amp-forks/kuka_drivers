@@ -9,7 +9,6 @@ find_package(ament_cmake REQUIRED)
 find_package(controller_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(kuka_drivers_core REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 
 include_directories(include)
@@ -28,7 +27,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 target_link_libraries(${PROJECT_NAME}
   controller_interface::controller_interface
-  std_msgs::std_msgs
   kuka_drivers_core::kuka_drivers_core
   kuka_control_mode_handler_parameters)
 

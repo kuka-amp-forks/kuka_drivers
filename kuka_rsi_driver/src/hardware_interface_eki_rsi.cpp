@@ -44,28 +44,12 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_init(
   RCLCPP_INFO(
     logger_, "Robot model verification: %s", verify_robot_model_ ? "enabled" : "disabled");
 
-  control_state_.cycle_time_command = 0.0;
-  control_state_.hw_control_mode_command = 0.0;
+  if (!ReadConfigureTimeout())
+  {
+    return CallbackReturn::ERROR;
+  }
 
   return CallbackReturn::SUCCESS;
-}
-
-std::vector<hardware_interface::CommandInterface>
-KukaEkiRsiHardwareInterface::export_command_interfaces()
-{
-  std::vector<hardware_interface::CommandInterface> command_interfaces;
-
-  command_interfaces = KukaRSIHardwareInterfaceBase::export_command_interfaces();
-
-  command_interfaces.emplace_back(
-    interface_prefix_ + hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE,
-    &control_state_.hw_control_mode_command);
-
-  command_interfaces.emplace_back(
-    interface_prefix_ + hardware_interface::CONFIG_PREFIX, hardware_interface::CYCLE_TIME,
-    &control_state_.cycle_time_command);
-
-  return command_interfaces;
 }
 
 std::vector<hardware_interface::StateInterface>
@@ -89,6 +73,11 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   eki_config.client_ip = info_.hardware_parameters.at("client_ip");
   eki_config.client_port = std::stoi(info_.hardware_parameters.at("client_port"));
 
+  {
+    std::lock_guard<std::mutex> lk{init_mtx_};
+    init_report_ = {};
+  }
+
   if (!SetupRobot(
         eki_config, std::make_unique<EventObserver>(this),
         std::make_unique<EkiEventHandlerExtension>(this)))
@@ -101,7 +90,7 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     eki_config.kli_ip_address.c_str(), eki_config.client_ip.c_str(), eki_config.client_port);
 
   auto status = robot_ptr_->RegisterStatusResponseHandler(
-    std::make_unique<StatusUpdateHandler>(this, &control_state_.status_manager));
+    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager));
   if (status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Registering status response handler failed: %s", status.message);
@@ -110,7 +99,15 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
 
   // Wait for the response to arrive from the controller
   std::unique_lock<std::mutex> lk{init_mtx_};
-  init_cv_.wait(lk, [this] { return init_report_.sequence_complete; });
+  if (!init_cv_.wait_for(lk, configure_timeout_, [this] { return init_report_.sequence_complete; }))
+  {
+    lk.unlock();
+    RCLCPP_ERROR_STREAM(
+      logger_, "No initialization report from the EKI server at "
+                 << eki_config.kli_ip_address << " within " << configure_timeout_.count() << " ms");
+    robot_ptr_.reset();
+    return CallbackReturn::FAILURE;
+  }
 
   if (verify_robot_model_)
   {

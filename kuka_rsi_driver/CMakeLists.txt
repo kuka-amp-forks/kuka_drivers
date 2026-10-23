@@ -76,6 +76,28 @@ install(
 
 if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake)
+
+  # Test-only plugin with the mxA status fake. It lives in a private ament prefix under the
+  # build directory, so it is never installed and no shipped description can select it.
+  set(TEST_PLUGINS kuka_rsi_driver_test_plugins)
+  set(TEST_PREFIX ${CMAKE_CURRENT_BINARY_DIR}/test_prefix)
+  add_library(${TEST_PLUGINS} SHARED
+    test_plugin/mxa_status_fake.cpp
+    test_plugin/hardware_interface_mxa_status_fake.cpp
+  )
+  target_include_directories(${TEST_PLUGINS} PRIVATE test_plugin)
+  target_link_libraries(${TEST_PLUGINS} ${PROJECT_NAME})
+  set_target_properties(${TEST_PLUGINS} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${TEST_PREFIX}/lib)
+  file(WRITE ${TEST_PREFIX}/share/ament_index/resource_index/packages/${TEST_PLUGINS} "")
+  file(WRITE
+    ${TEST_PREFIX}/share/ament_index/resource_index/hardware_interface__pluginlib__plugin/${TEST_PLUGINS}
+    "share/${TEST_PLUGINS}/mxa_status_fake_hardware_interface.xml")
+  configure_file(test_plugin/mxa_status_fake_hardware_interface.xml
+    ${TEST_PREFIX}/share/${TEST_PLUGINS}/mxa_status_fake_hardware_interface.xml COPYONLY)
+  file(WRITE ${TEST_PREFIX}/share/${TEST_PLUGINS}/package.xml
+    "<package format=\"3\"><name>${TEST_PLUGINS}</name></package>\n")
+  set(TEST_PLUGIN_ENV APPEND_ENV AMENT_PREFIX_PATH=${TEST_PREFIX})
+
   add_launch_test(test/test_driver_startup_rsi_only.py)
   add_launch_test(test/test_driver_startup_eki_rsi.py)
   add_launch_test(test/test_driver_startup_mxa_rsi.py)
@@ -84,6 +106,15 @@ if(BUILD_TESTING)
   add_launch_test(test/test_driver_activation_dual_arm.py)
   add_launch_test(test/test_streams_without_event_broadcaster.py)
   add_launch_test(test/test_loop_timing.py)
+  add_launch_test(test/test_configure_times_out_without_mxa.py)
+  add_launch_test(test/test_mxa_status_fake.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_mxa_status_fake_active.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_activates_without_kroshu_controllers.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_on_activate_sees_fresh_status.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_exports_no_runtime_config.py
+    TARGET test_exports_no_runtime_config_mxa_rsi ARGS "driver_version:=mxa_rsi")
+  add_launch_test(test/test_exports_no_runtime_config.py
+    TARGET test_exports_no_runtime_config_eki_rsi ARGS "driver_version:=eki_rsi")
 endif()
 
 ## EXPORTS

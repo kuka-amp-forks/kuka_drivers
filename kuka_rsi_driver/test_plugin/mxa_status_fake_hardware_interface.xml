@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<library path="kuka_rsi_driver_test_plugins">
+  <class type="kuka_rsi_driver::KukaMxaRsiStatusFakeHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>Test-only mxA hardware interface with an injectable status source</description>
+  </class>
+</library>
