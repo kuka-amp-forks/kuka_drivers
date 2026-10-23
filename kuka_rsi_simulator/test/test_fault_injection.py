@@ -22,7 +22,6 @@ so none of this depends on kuka_rsi_driver's reaction to a fault.
 import itertools
 import socket
 import threading
-import time
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -31,8 +30,6 @@ from rclpy.parameter import Parameter
 from std_msgs.msg import String
 
 from kuka_rsi_simulator.rsi_simulator import RSISimulator
-
-CYCLE_TIME = RSISimulator.cycle_time
 
 
 class _FakeRsiClient:
@@ -82,6 +79,9 @@ class FaultInjectionTestCase(unittest.TestCase):
         # fake peer directly rather than via a parameter (no callback for this one).
         self.node.rsi_ip_address_ = "127.0.0.1"
         self.node.rsi_port_address_ = self.fake_client.port
+        # Tests drive timer_callback() by hand; the node's own timer would
+        # otherwise also fire during spin_once and add uncounted cycles.
+        self.node.destroy_timer(self.node.timer)
         self.states = []
         self.node.create_subscription(
             String, f"{self.node.node_name_}/rsi/state", self._on_state, 10
@@ -94,11 +94,6 @@ class FaultInjectionTestCase(unittest.TestCase):
     def _on_state(self, msg):
         root = ET.fromstring(msg.data)
         self.states.append(int(root.find("IPOC").text))
-
-    def _spin_for(self, seconds):
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
-            rclpy.spin_once(self.node, timeout_sec=0.05)
 
     def _run_cycles(self, count):
         """Drive the node's timer callback directly, bypassing the ROS timer.
@@ -155,9 +150,9 @@ class FaultInjectionTestCase(unittest.TestCase):
         self._assert_contiguous()
 
     def test_simulator_injects_repeated_ipoc(self):
-        self._spin_for(3 * CYCLE_TIME)
+        self._run_cycles(3)
         self._set_fault("fault_repeated_ipoc_count", 3)
-        self._spin_for(8 * CYCLE_TIME)
+        self._run_cycles(8)
 
         run_lengths = [len(list(group)) for _, group in itertools.groupby(self.states)]
         # The armed IPOC is sent once normally, then repeated 3 more times.
