@@ -14,6 +14,7 @@
 
 """The control loop must never busy-spin, in any state robot_manager can produce."""
 
+import multiprocessing
 import os
 import sys
 import unittest
@@ -47,6 +48,16 @@ MEASURE_SECONDS = 1.5
 
 def _config(name):
     return os.path.join(get_package_share_directory("kuka_rsi_driver"), "config", name)
+
+
+def _measure_cpu_percent(pid, seconds=MEASURE_SECONDS):
+    # Blocks for `seconds`; percent is relative to a single core (100 == one core busy).
+    return psutil.Process(pid).cpu_percent(interval=seconds)
+
+
+def _spin_forever():
+    while True:
+        pass
 
 
 @pytest.mark.launch_test
@@ -121,8 +132,7 @@ class LoopBlocksOrSleepsEveryCycleInEveryState(JointMoveTestCase):
         return pid
 
     def _cpu_percent(self, pid, seconds=MEASURE_SECONDS):
-        # Blocks for `seconds`; percent is relative to a single core (100 == one core busy).
-        return psutil.Process(pid).cpu_percent(interval=seconds)
+        return _measure_cpu_percent(pid, seconds)
 
     def _assert_not_spinning(self, pid, label):
         cpu = self._cpu_percent(pid)
@@ -189,6 +199,36 @@ class LoopBlocksOrSleepsEveryCycleInEveryState(JointMoveTestCase):
         self._assert_not_spinning(pid, "ACTIVE")
 
         self._set_hw_state(State.PRIMARY_STATE_INACTIVE, "inactive")
+
+
+class BusySpinDetectorCatchesARealSpin(unittest.TestCase):
+    """Negative control: the measurement above must trip on an actual busy-spin."""
+
+    def setUp(self):
+        # fork, not the platform default: the test module isn't import-by-name
+        # here, and a forkserver/spawn child would need to pickle the target.
+        self.proc = multiprocessing.get_context("fork").Process(target=_spin_forever, daemon=True)
+        self.proc.start()
+        handle = psutil.Process(self.proc.pid)
+        handle.cpu_percent(interval=None)  # prime psutil's internal baseline
+        try:
+            handle.nice(-10)  # improve odds of a fair CPU share on a loaded runner
+        except psutil.AccessDenied:
+            pass
+
+    def tearDown(self):
+        self.proc.terminate()
+        self.proc.join(timeout=5)
+
+    def test_spinning_process_trips_the_detector(self):
+        cpu = _measure_cpu_percent(self.proc.pid)
+        print(f"negative control, deliberately spinning process: {cpu:.1f}%")
+        self.assertGreater(
+            cpu,
+            SPIN_THRESHOLD_PERCENT,
+            f"detector failed to catch a deliberate busy-spin: {cpu:.1f}% CPU "
+            f"(threshold {SPIN_THRESHOLD_PERCENT}%)",
+        )
 
 
 @launch_testing.post_shutdown_test()
