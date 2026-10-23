@@ -32,7 +32,7 @@ env:
 
 jobs:
   build_test:
-    name: Build and test kuka_rsi_driver on Lyrical
+    name: Build and test on Lyrical
     runs-on: ubuntu-latest
     container:
       image: ros@sha256:0c19f326a339ed770ef1d4c0646a8b53bdb49dd5ff74b6de41ebdb8ac21e1806
@@ -90,7 +90,7 @@ jobs:
           colcon build --merge-install --event-handlers console_cohesion+ \
             --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-      - name: colcon test (kuka_rsi_driver, with a Zenoh router)
+      - name: colcon test (with a Zenoh router)
         run: |
           set -eo pipefail +u
           source "/opt/ros/${ROS_DISTRO}/setup.bash"
@@ -100,20 +100,23 @@ jobs:
           # nothing discovers anything and every test times out on robot_description.
           ros2 run rmw_zenoh_cpp rmw_zenohd > zenohd.log 2>&1 &
           sleep 3
-          colcon test --merge-install --packages-select kuka_rsi_driver \
+          # Only select kuka_rsi_simulator once it has tests of its own.
+          pkgs="kuka_rsi_driver"
+          [ -d src/kuka_drivers/kuka_rsi_simulator/test ] && pkgs="${pkgs} kuka_rsi_simulator"
+          colcon test --merge-install --packages-select ${pkgs} \
             --executor sequential --event-handlers console_cohesion+
           results=$(colcon test-result --all --verbose)
           printf '%s\n' "${results}"
           colcon test-result --all
           count=$(printf '%s\n' "${results}" | sed -n 's/^Summary: \([0-9][0-9]*\) tests\?,.*/\1/p')
-          echo "kuka_rsi_driver: colcon recorded ${count:-0} tests"
+          echo "colcon recorded ${count:-0} tests"
           {
-            echo "### kuka_rsi_driver test results"
+            echo "### Test results"
             echo '```'
             printf '%s\n' "${results}"
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY}"
-          # Every add_launch_test() must be registered, not just one.
+          # Every add_launch_test() in kuka_rsi_driver must be registered, not just one.
           expected=$(grep -c '^\s*add_launch_test(' \
             src/kuka_drivers/kuka_rsi_driver/CMakeLists.txt)
           registered=$(ctest --test-dir build/kuka_rsi_driver -N \
@@ -126,6 +129,8 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: kuka_rsi_driver-test-results
-          path: ws/build/kuka_rsi_driver/test_results/**/*.xml
+          name: test-results
+          path: |
+            ws/build/kuka_rsi_driver/test_results/**/*.xml
+            ws/build/kuka_rsi_simulator/pytest.xml
           if-no-files-found: warn
