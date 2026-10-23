@@ -58,7 +58,7 @@ The following configuration files are available in the `config` directory of the
 The parameters in the driver configuration file can be changed during runtime using the parameter interface of the `robot_manager` node:
 
 - `position_controller_name`: The name of the controller (string) that controls the `position` interface of the robot. It can't be changed in active state.
-- `cycle_time`: The cycle time of RSI communication either 1 (4ms) or 2 (12ms). It can't be changed in active state.
+- `cycle_time`: The cycle time of RSI communication. Only 1 (4 ms) is accepted: the hardware interface runs RSI at a fixed 4 ms.
 
 ### I/O configuration
 

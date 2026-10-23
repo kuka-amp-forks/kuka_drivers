@@ -26,21 +26,8 @@ using lifecycle_msgs::msg::State;
 
 namespace kuka_rsi_driver
 {
-RobotManagerNodeEkiRsi::RobotManagerNodeEkiRsi()
-{
-  control_mode_pub_ = create_publisher<std_msgs::msg::UInt32>(
-    "control_mode_handler/control_mode", rclcpp::SystemDefaultsQoS());
-}
-
 CallbackReturn RobotManagerNodeEkiRsi::on_configure(const rclcpp_lifecycle::State &)
 {
-  const auto logger = get_logger();
-
-  // Publish initial control mode
-  std_msgs::msg::UInt32 message;
-  message.data = static_cast<int>(control_mode_);
-  control_mode_pub_->publish(message);
-
   return RobotManagerBase::configure_driver(configuration_controllers_);
 }
 
@@ -92,11 +79,6 @@ bool RobotManagerNodeEkiRsi::OnControlModeChangeRequestAdditionalTasks(const int
 
   kuka_drivers_core::ControlMode target_control_mode =
     static_cast<kuka_drivers_core::ControlMode>(control_mode);
-
-  // Publish control mode change to control mode handler
-  std_msgs::msg::UInt32 message;
-  message.data = control_mode;
-  control_mode_pub_->publish(message);
 
   if (get_current_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
   {

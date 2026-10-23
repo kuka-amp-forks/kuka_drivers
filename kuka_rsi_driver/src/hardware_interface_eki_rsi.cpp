@@ -44,28 +44,7 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_init(
   RCLCPP_INFO(
     logger_, "Robot model verification: %s", verify_robot_model_ ? "enabled" : "disabled");
 
-  control_state_.cycle_time_command = 0.0;
-  control_state_.hw_control_mode_command = 0.0;
-
   return CallbackReturn::SUCCESS;
-}
-
-std::vector<hardware_interface::CommandInterface>
-KukaEkiRsiHardwareInterface::export_command_interfaces()
-{
-  std::vector<hardware_interface::CommandInterface> command_interfaces;
-
-  command_interfaces = KukaRSIHardwareInterfaceBase::export_command_interfaces();
-
-  command_interfaces.emplace_back(
-    interface_prefix_ + hardware_interface::CONFIG_PREFIX, hardware_interface::CONTROL_MODE,
-    &control_state_.hw_control_mode_command);
-
-  command_interfaces.emplace_back(
-    interface_prefix_ + hardware_interface::CONFIG_PREFIX, hardware_interface::CYCLE_TIME,
-    &control_state_.cycle_time_command);
-
-  return command_interfaces;
 }
 
 std::vector<hardware_interface::StateInterface>
@@ -101,7 +80,7 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     eki_config.kli_ip_address.c_str(), eki_config.client_ip.c_str(), eki_config.client_port);
 
   auto status = robot_ptr_->RegisterStatusResponseHandler(
-    std::make_unique<StatusUpdateHandler>(this, &control_state_.status_manager));
+    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager));
   if (status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Registering status response handler failed: %s", status.message);

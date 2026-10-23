@@ -63,20 +63,13 @@ Hardware interfaces do not support parameters that can be changed in runtime. To
 
 ### 3.1. `kuka_control_mode_handler`
 
-The `ControlModeHandler` can update the `control_mode` command interface of a hardware. It listens on the `~/control_mode` topic and makes control mode changes possible without having to reactivate the driver.
-The control mode is [defined as an enum](https://github.com/kuka-ros/kuka_drivers/blob/master/kuka_drivers_core/include/kuka_drivers_core/control_mode.hpp) in the `kuka_drivers_core` package, the subscription therefore is of an unsigned integer type.
-
-In multi-robot mode, one `ControlModeHandler` instance updates multiple prefixed
-`control_mode` command interfaces, but it still accepts only a single shared `~/control_mode`
-input topic. Therefore the same control mode is applied to all configured robots.
+The RSI hardware interfaces run joint position control only and start it on every activation, so they export no `control_mode` command interface. The `ControlModeHandler` claims no interfaces and does nothing; it remains loadable so that existing launch files and the `robot_manager` node still work.
 
 __Required Parameters__: None
 
 __Optional Parameters__:
 
-- `robot_prefixes` (`string[]`, default `['']`):
-  - Empty string entry (`''`) maps to the unprefixed `runtime_config/control_mode` interface.
-  - Non-empty entries map to prefixed interfaces (`<robot_prefix>_runtime_config/control_mode`).
+- `robot_prefixes` (`string[]`, default `['']`): accepted for existing configurations, has no effect.
 
 
 ## 4. Hybrid Controllers
@@ -85,21 +78,7 @@ Hybrid Controllers group together related functionalities that are intended to b
 
 ### 4.1. `kuka_kss_message_handler`
 
-The `kuka_kss_message_handler` controller only works for the EKI + RSI driver. It provides two non-real-time capabilities:
-
-
-- __Set RSI Cycle Time__
-
-  Publish a `std_msgs::msg::UInt8` message to `~/cycle_time` to set the cycle time:
-  - 1 &rarr; 4 ms
-  - 2 &rarr; 12 ms
-
-  In multi-robot mode, this topic is shared across all configured robots, therefore the selected
-  cycle time is applied to all of them.
-
-  ```shell
-  ros2 topic pub /kss_message_handler/cycle_time std_msgs/msg/UInt8 "{data: 1}" --once
-  ```
+The `kuka_kss_message_handler` controller only works for the EKI + RSI driver. It publishes the robot status as a non-real-time message. The RSI cycle time is fixed at 4 ms by the hardware interface and cannot be set.
 
 - __Monitor Robot Status__
 
@@ -115,7 +94,7 @@ The `kuka_kss_message_handler` controller only works for the EKI + RSI driver. I
   Field             | Possible values                          | Description
   ------------------|------------------------------------------|--------------------------------------------------------------------
   `control_mode`    | `1` (joint position)                     | Specifies the robot's control mode
-  `cycle_time`      | `1` (4 ms), `2` (12 ms)                  | Defines the selected RSI communication cycle time
+  `cycle_time`      | `1` (4 ms)                               | Defines the selected RSI communication cycle time
   `drives_powered`  | `true`/`false`                           | Shows whether the robot's drives are powered
   `emergency_stop`  | `true`/`false`                           | Reflects whether the emergency stop is active
   `guard_stop`      | `true`/`false`                           | Indicates whether the guard stop is active
@@ -128,13 +107,12 @@ The `kuka_kss_message_handler` controller only works for the EKI + RSI driver. I
   ros2 topic echo /kss_message_handler/status
   ```
 
-__Note:__ These features are available only when the driver is in the __configured__ state. However, status updates are still published in the __active__ state. These updates are only sent if the EKI driver has an idle cycle, meaning no other messages are being transmitted at that moment; this applies to both the configured and the active states.
+__Note:__ Status updates are published in both the __configured__ and the __active__ state. These updates are only sent if the EKI driver has an idle cycle, meaning no other messages are being transmitted at that moment; this applies to both the configured and the active states.
 
 __Required Parameters__: None
 
 __Optional Parameters__:
 
 - `robot_prefixes` (`string[]`, default `['']`):
-  - Empty string entry (`''`) maps to unprefixed state interfaces (`state/control_mode`, `state/cycle_time`, etc.) and unprefixed command interface (`runtime_config/cycle_time`).
-  - Non-empty entries map to prefixed interfaces (`<robot_prefix>_state/control_mode`, `<robot_prefix>_runtime_config/cycle_time`, etc.).
-  - The `~/cycle_time` topic is shared across all configured robots, allowing centralized control of all robot instances.
+  - Empty string entry (`''`) maps to unprefixed state interfaces (`state/control_mode`, `state/cycle_time`, etc.).
+  - Non-empty entries map to prefixed interfaces (`<robot_prefix>_state/control_mode`, `<robot_prefix>_state/cycle_time`, etc.).

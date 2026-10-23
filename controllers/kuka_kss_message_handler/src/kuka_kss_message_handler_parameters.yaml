@@ -3,4 +3,4 @@ kuka_kss_message_handler:
     type: string_array
     # Keep one entry by default; empty string means unprefixed single-robot behavior.
     default_value: [""]
-    description: List of robot prefixes used for binding KSS state/command interfaces.
+    description: List of robot prefixes used for binding KSS state interfaces.

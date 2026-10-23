@@ -70,8 +70,6 @@ public:
   return_type write(const rclcpp::Time &, const rclcpp::Duration &) override;
 
   KUKA_RSI_DRIVER_PUBLIC void set_server_event(kuka_drivers_core::HardwareEvent);
-  KUKA_RSI_DRIVER_PUBLIC void initialize_command_interfaces(
-    kuka_drivers_core::ControlMode control_mode, RsiCycleTime cycle_time);
 
 protected:
   KUKA_RSI_DRIVER_LOCAL bool SetupRobot(
@@ -160,17 +158,11 @@ protected:
   struct ControlState
   {
     StatusManager status_manager;
-    double hw_control_mode_command = 0.0;
-    double cycle_time_command = 0.0;
-    kuka_drivers_core::ControlMode prev_control_mode =
-      kuka_drivers_core::ControlMode::CONTROL_MODE_UNSPECIFIED;
-    RsiCycleTime prev_cycle_time = RsiCycleTime::RSI_4MS;
   };
 
   // Methods common for EKI and MXA version
   CallbackReturn extended_activation(const rclcpp_lifecycle::State &);
   CallbackReturn extended_deactivation(const rclcpp_lifecycle::State &);
-  kuka::external::control::Status ChangeCycleTime();
 
   const rclcpp::Logger logger_;
 
@@ -188,6 +180,12 @@ protected:
   static constexpr std::chrono::seconds DRIVES_POWERED_TIMEOUT{3};
   static constexpr std::chrono::milliseconds DRIVES_POWERED_CHECK_INTERVAL{100};
   static constexpr int64_t READ_TIMEOUT_MS = 1'000;
+
+  // Fixed cycle time and control mode for this driver version.
+  static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;
+  static constexpr double RSI_CYCLE_TIME_MS = 4.0;
+  static constexpr kuka::external::control::ControlMode CONTROL_MODE =
+    kuka::external::control::ControlMode::JOINT_POSITION_CONTROL;
 
   // threshold for logging slow RSI responses
   static constexpr std::chrono::milliseconds kWarningThreshold{2};
