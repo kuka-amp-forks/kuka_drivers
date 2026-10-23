@@ -125,13 +125,15 @@ MxaStatusFake::Status MxaStatusFake::TurnOffDrives()
   return {ReturnCode::OK};
 }
 
-MxaStatusFake::Status MxaStatusFake::SetCycleTime(kuka::external::control::kss::CycleTime cycle_time)
+MxaStatusFake::Status MxaStatusFake::SetCycleTime(
+  kuka::external::control::kss::CycleTime cycle_time)
 {
   if (cycle_time != kuka::external::control::kss::CycleTime::RSI_4MS)
   {
     std::ostringstream msg;
     msg << "mxA status fake: refusing cycle time "
-        << kuka::external::control::kss::CycleTimeToString(cycle_time) << ", only 4 ms is supported";
+        << kuka::external::control::kss::CycleTimeToString(cycle_time)
+        << ", only 4 ms is supported";
     return {ReturnCode::ERROR, msg.str().c_str()};
   }
   return {ReturnCode::OK, "Cycle time set"};
