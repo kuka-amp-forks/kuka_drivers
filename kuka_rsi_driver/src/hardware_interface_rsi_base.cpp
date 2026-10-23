@@ -377,9 +377,7 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
       auto interval = now - diagnostics_state_.last_msg_received_time;
       auto interval_ms =
         std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(interval);
-      // determine expected cycle time enum
-      double dt_ms =
-        (control_state_.prev_cycle_time == RsiCycleTime::RSI_12MS) ? 12.0 : 4.0;  // default to 4ms
+      const double dt_ms = RSI_CYCLE_TIME_MS;
       double low_thresh = dt_ms - 0.5;
       double high_thresh = dt_ms + 0.5;
       if (interval_ms.count() < low_thresh || interval_ms.count() > high_thresh)
@@ -499,14 +497,13 @@ void KukaRSIHardwareInterfaceBase::CopyGPIOStatesToCommands()
 // so dt is the nominal cycle rather than a jittery host-side measurement.
 void KukaRSIHardwareInterfaceBase::DeriveVelocityStates()
 {
-  const double dt =
-    ((control_state_.prev_cycle_time == RsiCycleTime::RSI_12MS) ? 12.0 : 4.0) / 1000.0;
+  const double dt = RSI_CYCLE_TIME_MS / 1000.0;
 
   for (size_t i = 0; i < interface_data_.velocity_states.size(); i++)
   {
     const double prev = interface_data_.prev_position_states[i];
-    // First cycle after activation, or after a cycle-time change: no usable
-    // previous sample, so report standstill rather than a step-sized spike.
+    // First cycle after activation: no usable previous sample, so report
+    // standstill rather than a step-sized spike.
     interface_data_.velocity_states[i] =
       std::isfinite(prev) ? (interface_data_.position_states[i] - prev) / dt : 0.0;
   }
@@ -642,21 +639,22 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     RCLCPP_INFO(logger_, "Drives successfully powered on");
   }
 
-  // Set control mode and cycle time before sending Start request
-  ChangeCycleTime();
+  // Set the cycle time on every activation: the mxA client starts at UNSPECIFIED and sends
+  // whatever it holds with the start request, and the KRC has no program for UNSPECIFIED.
+  if (auto cycle_status = robot_ptr_->SetCycleTime(RSI_CYCLE_TIME);
+      cycle_status.return_code != kuka::external::control::ReturnCode::OK)
+  {
+    RCLCPP_ERROR(logger_, "Setting the RSI cycle time failed: %s", cycle_status.message);
+    return CallbackReturn::FAILURE;
+  }
 
-  const auto control_mode =
-    static_cast<kuka::external::control::ControlMode>(control_state_.hw_control_mode_command);
-
-  kuka::external::control::Status control_status = robot_ptr_->StartControlling(control_mode);
+  RCLCPP_INFO(logger_, "Starting joint position control at %.0f ms", RSI_CYCLE_TIME_MS);
+  kuka::external::control::Status control_status = robot_ptr_->StartControlling(CONTROL_MODE);
   if (control_status.return_code == kuka::external::control::ReturnCode::ERROR)
   {
     RCLCPP_ERROR(logger_, "Starting external control failed: %s", control_status.message);
     return CallbackReturn::FAILURE;
   }
-
-  control_state_.prev_control_mode =
-    static_cast<kuka_drivers_core::ControlMode>(control_state_.hw_control_mode_command);
 
   // We must first receive the initial position of the robot
   // We set a longer timeout, since the first message might not arrive all that fast
@@ -793,35 +791,6 @@ void KukaRSIHardwareInterfaceBase::ResetDiagnostics()
   std::fill(
     interface_data_.prev_position_states.begin(), interface_data_.prev_position_states.end(),
     std::numeric_limits<double>::quiet_NaN());
-}
-
-kuka::external::control::Status KukaRSIHardwareInterfaceBase::ChangeCycleTime()
-{
-  const RsiCycleTime cycle_time = static_cast<RsiCycleTime>(control_state_.cycle_time_command);
-
-  if (control_state_.prev_cycle_time != cycle_time)
-  {
-    RCLCPP_INFO(
-      logger_, "Changing RSI cycle time to %s",
-      kuka::external::control::kss::CycleTimeToString(cycle_time));
-    auto status = robot_ptr_->SetCycleTime(cycle_time);
-    if (status.return_code != kuka::external::control::ReturnCode::OK)
-    {
-      return status;
-    }
-    control_state_.prev_cycle_time = cycle_time;
-  }
-
-  return kuka::external::control::Status(kuka::external::control::ReturnCode::OK);
-}
-
-void KukaRSIHardwareInterfaceBase::initialize_command_interfaces(
-  kuka_drivers_core::ControlMode control_mode, RsiCycleTime cycle_time)
-{
-  control_state_.prev_control_mode = control_mode;
-  control_state_.prev_cycle_time = cycle_time;
-  control_state_.hw_control_mode_command = static_cast<double>(control_mode);
-  control_state_.cycle_time_command = static_cast<double>(cycle_time);
 }
 
 bool KukaRSIHardwareInterfaceBase::LoadXmlConfig(

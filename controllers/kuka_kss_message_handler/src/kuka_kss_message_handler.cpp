@@ -54,16 +54,9 @@ std::string KssMessageHandler::ComposeInterfaceName(
 
 InterfaceConfig KssMessageHandler::command_interface_configuration() const
 {
-  InterfaceConfig config;
-  config.type = controller_interface::interface_configuration_type::INDIVIDUAL;
-
-  for (const auto & robot_prefix : params_.robot_prefixes)
-  {
-    config.names.emplace_back(ComposeInterfaceName(
-      robot_prefix, hardware_interface::CONFIG_PREFIX, hardware_interface::CYCLE_TIME));
-  }
-
-  return config;
+  // The RSI hardware components run at a fixed 4 ms cycle and export no cycle_time command
+  // interface.
+  return InterfaceConfig{controller_interface::interface_configuration_type::NONE};
 }
 
 InterfaceConfig KssMessageHandler::state_interface_configuration() const
@@ -98,12 +91,6 @@ CallbackReturn KssMessageHandler::on_configure(const rclcpp_lifecycle::State &)
   status_msg_.statuses = current_statuses_;
   status_publish_counter_ = 0;
 
-  // RSI cycle time: default to 4ms, as 12 ms is not supported for iiQKA.OS2
-  cycle_time_.store(static_cast<double>(kuka_driver_interfaces::msg::KssStatus::RSI_4MS));
-  cycle_time_subscription_ = get_node()->create_subscription<std_msgs::msg::UInt8>(
-    "~/cycle_time", rclcpp::SystemDefaultsQoS(),
-    std::bind(&KssMessageHandler::RsiCycleTimeChangedCallback, this, std::placeholders::_1));
-
   // Status publisher for all robots. One message contains all robot statuses.
   auto status_publisher = get_node()->create_publisher<kuka_driver_interfaces::msg::KssStatusArray>(
     "~/status", rclcpp::SystemDefaultsQoS());
@@ -112,29 +99,13 @@ CallbackReturn KssMessageHandler::on_configure(const rclcpp_lifecycle::State &)
     status_publisher);
 
   RCLCPP_INFO(
-    get_node()->get_logger(),
-    "KSS message handler configured with %zu robot instance(s); cycle_time command topic is shared",
+    get_node()->get_logger(), "KSS message handler configured with %zu robot instance(s)",
     robot_prefixes_.size());
   return CallbackReturn::SUCCESS;
 }
 
 ReturnType KssMessageHandler::update(const rclcpp::Time &, const rclcpp::Duration &)
 {
-  const double cycle_time = cycle_time_.load();
-  bool all_cycle_time_set = true;
-
-  for (size_t idx = 0; idx < command_interfaces_.size(); ++idx)
-  {
-    const bool cycle_time_set = command_interfaces_[idx].set_value(cycle_time);
-    all_cycle_time_set = all_cycle_time_set && cycle_time_set;
-    if (!cycle_time_set)
-    {
-      RCLCPP_WARN_THROTTLE(
-        get_node()->get_logger(), *get_node()->get_clock(), WARN_THROTTLE_DURATION_MS,
-        "Failed to set cycle time command interface for robot '%s'", robot_prefixes_[idx].c_str());
-    }
-  }
-
   for (size_t idx = 0; idx < current_statuses_.size(); ++idx)
   {
     AssignStatusFromInterfaces(
@@ -148,29 +119,7 @@ ReturnType KssMessageHandler::update(const rclcpp::Time &, const rclcpp::Duratio
     status_publish_counter_ = 0;
   }
 
-  return all_cycle_time_set ? ReturnType::OK : ReturnType::ERROR;
-}
-
-void KssMessageHandler::RsiCycleTimeChangedCallback(const std_msgs::msg::UInt8::SharedPtr msg)
-{
-  if (
-    msg->data == kuka_driver_interfaces::msg::KssStatus::RSI_4MS ||
-    msg->data == kuka_driver_interfaces::msg::KssStatus::RSI_12MS)
-  {
-    cycle_time_.store(static_cast<double>(msg->data));
-    RCLCPP_INFO(
-      get_node()->get_logger(),
-      "RSI cycle time changed to %s, "
-      "this will be sent to the KUKA controller during activation",
-      msg->data == 2   ? "12 ms"
-      : msg->data == 1 ? "4 ms"
-                       : "UNSPECIFIED");
-  }
-  else
-  {
-    RCLCPP_ERROR(
-      get_node()->get_logger(), "'%hhu' is not a valid value for the RSI cycle time", msg->data);
-  }
+  return ReturnType::OK;
 }
 
 void KssMessageHandler::AssignStatusFromInterfaces(

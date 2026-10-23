@@ -83,6 +83,10 @@ if(BUILD_TESTING)
   add_launch_test(test/test_driver_activation.py)
   add_launch_test(test/test_driver_activation_dual_arm.py)
   add_launch_test(test/test_streams_without_event_broadcaster.py)
+  add_launch_test(test/test_exports_no_runtime_config.py
+    TARGET test_exports_no_runtime_config_mxa_rsi ARGS "driver_version:=mxa_rsi")
+  add_launch_test(test/test_exports_no_runtime_config.py
+    TARGET test_exports_no_runtime_config_eki_rsi ARGS "driver_version:=eki_rsi")
 endif()
 
 ## EXPORTS

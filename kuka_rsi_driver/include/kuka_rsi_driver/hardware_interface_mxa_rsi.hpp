@@ -50,9 +50,6 @@ public:
     const hardware_interface::HardwareComponentInterfaceParams & params) override;
 
   KUKA_RSI_DRIVER_PUBLIC
-  std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
-
-  KUKA_RSI_DRIVER_PUBLIC
   std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
 
   KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_configure(const rclcpp_lifecycle::State &) override;
