@@ -42,6 +42,14 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_init(
   RCLCPP_INFO(
     logger_, "Robot model verification: %s", verify_robot_model_ ? "enabled" : "disabled");
 
+  if (!ReadTimeoutParameter(
+        "mxa_status_timeout_ms", DEFAULT_MXA_STATUS_TIMEOUT, mxa_status_timeout_))
+  {
+    return CallbackReturn::ERROR;
+  }
+  RCLCPP_INFO(
+    logger_, "mxA status timeout: %ld ms", static_cast<int64_t>(mxa_status_timeout_.count()));
+
   return CallbackReturn::SUCCESS;
 }
 
@@ -59,6 +67,16 @@ KukaMxaRsiHardwareInterface::export_state_interfaces()
 
 CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle::State &)
 {
+  if (mxa_status_timeout_ >= SDK_MXA_RECEIVE_TIMEOUT)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "mxa_status_timeout_ms is %ld, it must stay below the SDK's %ld ms mxA receive timeout",
+      static_cast<int64_t>(mxa_status_timeout_.count()),
+      static_cast<int64_t>(SDK_MXA_RECEIVE_TIMEOUT.count()));
+    return CallbackReturn::FAILURE;
+  }
+
   kuka::external::control::kss::Configuration mxa_config;
   mxa_config.installed_interface =
     kuka::external::control::kss::Configuration::InstalledInterface::MXA_RSI;
@@ -121,6 +139,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     RCLCPP_INFO(logger_, "Robot model verification is disabled, proceeding with the connection.");
   }
 
+  control_state_.status_manager.StampTelegram();
   return CallbackReturn::SUCCESS;
 }
 
@@ -134,12 +153,81 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_deactivate(const rclcpp_lifecycle
   return KukaRSIHardwareInterfaceBase::extended_deactivation(state);
 }
 
+// A silent mxA link is a connection loss in every state; ERROR releases the client.
+CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::State & state)
+{
+  if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
+  {
+    RCLCPP_ERROR(logger_, "Stopping: hardware error, treated as an mxA connection loss");
+  }
+  RCLCPP_ERROR(
+    logger_, "Releasing the mxA client, stop_reason reads '%s'; configure again to reconnect",
+    kuka_drivers_core::StopReasonName(event_state_.stop_reason.load()));
+  return KukaRSIHardwareInterfaceBase::on_error(state);
+}
+
 return_type KukaMxaRsiHardwareInterface::read(
   const rclcpp::Time & time, const rclcpp::Duration & duration)
 {
+  const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+    control_state_.status_manager.TelegramAge());
+  if (age > mxa_status_timeout_)
+  {
+    if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
+    {
+      RCLCPP_ERROR(
+        logger_, "Stopping: no mxA telegram within %ld ms, the newest is %ld ms old",
+        static_cast<int64_t>(mxa_status_timeout_.count()), static_cast<int64_t>(age.count()));
+    }
+    UpdateStopReasonState();
+    return return_type::ERROR;
+  }
+
   control_state_.status_manager.UpdateStateInterfaces();
+  if (runtime_state_.is_active)
+  {
+    LatchStatusStop();
+  }
 
   return KukaRSIHardwareInterfaceBase::read(time, duration);
+}
+
+bool KukaMxaRsiHardwareInterface::LatchStatusStop()
+{
+  using kuka_drivers_core::StopReason;
+  auto & status = control_state_.status_manager;
+
+  StopReason reason = StopReason::NONE;
+  if (status.IsEmergencyStopActive())
+  {
+    reason = StopReason::EMERGENCY_STOP;
+  }
+  else if (status.IsGuardStopActive())
+  {
+    reason = StopReason::GUARD_STOP;
+  }
+  else if (!status.DrivesPowered())
+  {
+    reason = StopReason::DRIVES_NOT_POWERED;
+  }
+  else if (!status.IsMotionPossible())
+  {
+    reason = StopReason::MOTION_NOT_POSSIBLE;
+  }
+  else if (!status.IsKrcInExtMode())
+  {
+    reason = StopReason::NOT_IN_EXT;
+  }
+
+  if (reason == StopReason::NONE || !LatchStopReason(reason))
+  {
+    return false;
+  }
+  set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+  RCLCPP_ERROR(
+    logger_, "Stopping: %s (%s, IPOC %lu)", kuka_drivers_core::StopReasonName(reason),
+    status.Describe().c_str(), diagnostics_state_.last_ipoc);
+  return true;
 }
 
 void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)
@@ -167,29 +255,6 @@ void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)
     }
   }
   init_cv_.notify_one();
-}
-
-void KukaMxaRsiHardwareInterface::Read(const int64_t request_timeout)
-{
-  if (control_state_.status_manager.IsEmergencyStopActive())
-  {
-    RCLCPP_ERROR(logger_, "Emergency stop detected!");
-    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-  }
-  else if (!control_state_.status_manager.DrivesPowered())
-  {
-    RCLCPP_ERROR(logger_, "Drives are not powered!");
-    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-  }
-  else if (
-    !control_state_.status_manager.IsMotionPossible() &&
-    this->get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
-  {
-    RCLCPP_ERROR(logger_, "Motion is not possible");
-    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-  }
-
-  KukaRSIHardwareInterfaceBase::Read(request_timeout);
 }
 
 void KukaMxaRsiHardwareInterface::CreateRobotInstance(

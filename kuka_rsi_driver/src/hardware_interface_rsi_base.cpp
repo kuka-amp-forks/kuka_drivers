@@ -284,6 +284,22 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::
   return CallbackReturn::SUCCESS;
 }
 
+// Nothing waits on a dead link; the next configure makes a new client.
+CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::State &)
+{
+  if (runtime_state_.is_active && runtime_state_.msg_received && robot_ptr_)
+  {
+    robot_ptr_->kuka::external::control::kss::rsi::Robot::StopControlling();
+  }
+  runtime_state_.is_active = false;
+  runtime_state_.msg_received = false;
+  runtime_state_.stop_pending = false;
+  runtime_state_.cancel_confirmed = false;
+  UpdateStopReasonState();
+  robot_ptr_.reset();
+  return CallbackReturn::SUCCESS;
+}
+
 return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcpp::Duration &)
 {
   {

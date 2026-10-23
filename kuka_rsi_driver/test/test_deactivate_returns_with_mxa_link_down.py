@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deactivation returns within one RSI cycle with the mxA stream stalled; the stop waits."""
+"""A stop pending on a stalled stream waits; losing the link while INACTIVE errors instead."""
 
 import os
 import sys
@@ -25,6 +25,8 @@ from lifecycle_msgs.msg import State
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mxa_status_fake_support import (  # noqa: E402
+    COMPONENT,
+    MXA_LOSS_LINE,
     STOP_COMPLETE_LINE,
     LogCursor,
     MxaStatusFakeTestCase,
@@ -35,11 +37,11 @@ from mxa_status_fake_support import (  # noqa: E402
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
 def generate_test_description():
-    return fake_launch_description()
+    return fake_launch_description(respawn_simulator=True)
 
 
 class TestDeactivateReturnsWithMxaLinkDown(MxaStatusFakeTestCase):
-    def test_deactivate_returns_with_mxa_link_down(self, proc_output, proc_info):
+    def test_deactivate_returns_with_mxa_link_down(self, proc_output):
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         self.publish_is_configured()
         log = LogCursor(proc_output)
@@ -49,13 +51,32 @@ class TestDeactivateReturnsWithMxaLinkDown(MxaStatusFakeTestCase):
         self.inject("stall")
         self.assert_deactivation_within_one_cycle(log)
 
-        # With the link down neither the cancel nor the drives-off can be confirmed.
+        # With the status withheld neither the cancel nor the drives-off can be confirmed.
         self.assertFalse(
-            log.wait_for(STOP_COMPLETE_LINE, timeout=1.0), "stop completed with the mxA link down"
+            log.wait_for(STOP_COMPLETE_LINE, timeout=1.0),
+            "stop completed with the status withheld",
         )
-        self.inject("resume")
+
+        # Losing the link while the stop is pending is an error, not a longer wait.
+        log = LogCursor(proc_output)
+        self.inject("link_down")
+        self.assertIsNotNone(log.wait_for_match(MXA_LOSS_LINE, timeout=5), "no mxA loss line")
+        self.assertTrue(
+            self._spin_until(
+                lambda: self.component_state() == State.PRIMARY_STATE_UNCONFIGURED, timeout=10
+            ),
+            "component did not reach UNCONFIGURED",
+        )
+
+        # A reconfigure reconnects and the next activation is not refused by the old stop.
+        log = LogCursor(proc_output)
+        self.inject("link_up resume")
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
+        self.activate_and_stream(log)
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for(STOP_COMPLETE_LINE, timeout=5), "stop never completed")
-        proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
+        self.assertTrue(log.wait_for(f"Successful 'deactivate' of hardware '{COMPONENT}'", 5))
+        self.wait_for_simulator_respawn(log)
 
 
 @launch_testing.post_shutdown_test()

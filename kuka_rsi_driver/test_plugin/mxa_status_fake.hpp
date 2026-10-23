@@ -37,8 +37,8 @@ namespace kuka_rsi_driver
 // Test stand-in for kss::mxa::Robot. Keeps the plain RSI stream and replaces the mxA link
 // with a loopback UDP socket that tests write status updates to, one text datagram each:
 //   "<field>=<int> ..."  fields of kss::StatusUpdate, e.g. "emergency_stop=1 operation_mode=4"
-//   "period_ms=<int>"    telegram cadence; 0 stops the cadence
-//   "stall" / "resume"   stop or restart delivery to the driver
+//   "stall" / "resume"   withhold or restart status delivery; telegrams keep arriving
+//   "link_down" / "link_up"  stop or restart the telegram stream itself
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
 //   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while stalled
 //   "drives_stuck=<0|1>"  while set, drives-on and drives-off requests leave drives_powered as is
@@ -92,8 +92,8 @@ private:
   StatusUpdate status_;
   StatusUpdate delivered_;
   bool stalled_ = false;
+  bool link_down_ = false;
   bool drives_stuck_ = false;
-  std::chrono::milliseconds period_{0};
   uint64_t telegrams_ = 0;
   int cancel_cycles_ = 12;
   int cancel_pending_ = 0;

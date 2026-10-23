@@ -52,6 +52,12 @@ STOP_REASON_BROADCASTER = "stop_reason_broadcaster"
 STOP_REASON_NONE = 0.0
 STOP_REASON_RSI_RECEIVE_FAILED = 1.0
 STOP_REASON_RSI_SEND_FAILED = 2.0
+STOP_REASON_EMERGENCY_STOP = 3.0
+STOP_REASON_GUARD_STOP = 4.0
+STOP_REASON_DRIVES_NOT_POWERED = 5.0
+STOP_REASON_MOTION_NOT_POSSIBLE = 6.0
+STOP_REASON_NOT_IN_EXT = 7.0
+STOP_REASON_MXA_CONNECTION_LOST = 8.0
 
 SIMULATOR_NODE = "/kuka_rsi_simulator"
 SIMULATOR_STATE_TOPIC = "/rsi_simulator_node/rsi/state"
@@ -65,6 +71,14 @@ RECEIVE_FAILURE_LINE = re.compile(
     r"Stopping: no RSI packet within (\d+) ms of the last one, IPOC (\d+)"
 )
 SEND_FAILURE_LINE = re.compile(r"Stopping: sending the RSI command for IPOC (\d+) failed")
+STATUS_STOP_LINE = re.compile(
+    r"Stopping: ([a-zA-Z ]+) \((emergency_stop=\d guard_stop=\d drives_powered=\d "
+    r"motion_possible=\d operation_mode=\d+), IPOC (\d+)\)"
+)
+MXA_LOSS_LINE = re.compile(
+    r"Stopping: no mxA telegram within (\d+) ms, the newest is (\d+) ms old"
+)
+MXA_RELEASED_LINE = "Releasing the mxA client, stop_reason reads 'mxA connection lost'"
 JTC_DEACTIVATED_LINE = (
     f"Deactivating controllers [{JTC} ] as their command interfaces are tied to "
     "DEACTIVATEing hardware components"
@@ -91,8 +105,13 @@ def _spawner(name, param_file=None, inactive=False):
     )
 
 
-def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS):
-    """control_node on the fake with JSB active, JTC inactive and the stop_reason broadcaster."""
+def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS, respawn_simulator=False):
+    """
+    control_node on the fake with JSB active, JTC inactive and the stop_reason broadcaster.
+
+    The simulator exits on the stop flag, so a test that reactivates after a stop packet
+    needs it respawned; it comes back silent, and resume_and_activate resumes it.
+    """
     description = {"robot_description": robot_description(read_timeout_ms=read_timeout_ms)}
 
     control_node = launch_ros.actions.Node(
@@ -118,6 +137,8 @@ def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS):
         executable="rsi_simulator",
         name="kuka_rsi_simulator",
         parameters=[{"fault_dropped_packet_count": SIMULATOR_SILENCE_PACKETS}],
+        respawn=respawn_simulator,
+        respawn_delay=0.2,
     )
 
     return launch.LaunchDescription(
@@ -257,6 +278,12 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
         self.assertEqual(self.controller_state(STOP_REASON_BROADCASTER), "active")
         self.assertEqual(self.stop_reason(), reason)
 
+    def wait_for_component_state(self, state_id, timeout=10):
+        self.assertTrue(
+            self._spin_until(lambda: self.component_state() == state_id, timeout),
+            f"component did not reach state {state_id}, it is {self.component_state()}",
+        )
+
     def wait_for_states_after(self, ipoc, count, timeout=10):
         """Wait until the simulator has sent `count` states with an IPOC above `ipoc`."""
         self.assertTrue(
@@ -282,14 +309,23 @@ __all__ = [
     "JSB",
     "JTC",
     "JTC_DEACTIVATED_LINE",
+    "MXA_LOSS_LINE",
+    "MXA_RELEASED_LINE",
     "NO_STOP_PACKET_LINE",
     "OP_MODE_EXT",
     "RECEIVE_FAILURE_LINE",
     "SEND_FAILURE_LINE",
     "SIMULATOR_READ_TIMEOUT_MS",
     "SIMULATOR_SILENCE_PACKETS",
+    "STATUS_STOP_LINE",
     "STOP_REASON_BROADCASTER",
+    "STOP_REASON_DRIVES_NOT_POWERED",
+    "STOP_REASON_EMERGENCY_STOP",
+    "STOP_REASON_GUARD_STOP",
+    "STOP_REASON_MOTION_NOT_POSSIBLE",
+    "STOP_REASON_MXA_CONNECTION_LOST",
     "STOP_REASON_NONE",
+    "STOP_REASON_NOT_IN_EXT",
     "STOP_REASON_RSI_RECEIVE_FAILED",
     "STOP_REASON_RSI_SEND_FAILED",
     "LogCursor",

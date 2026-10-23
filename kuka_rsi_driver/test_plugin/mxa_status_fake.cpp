@@ -200,7 +200,6 @@ MxaStatusFake::Status MxaStatusFake::RegisterStatusResponseHandler(
 void MxaStatusFake::Serve()
 {
   std::array<char, 512> buf{};
-  auto last_tick = std::chrono::steady_clock::now();
   while (running_)
   {
     pollfd pfd{fd_, POLLIN, 0};
@@ -214,17 +213,13 @@ void MxaStatusFake::Serve()
     }
 
     std::lock_guard<std::mutex> lk{mtx_};
-    const auto now = std::chrono::steady_clock::now();
-    if (period_.count() > 0 && now - last_tick >= period_)
+    if (!link_down_ && status_handler_)
     {
-      last_tick = now;
-      if (!stalled_)
-      {
-        ++telegrams_;
-      }
+      ++telegrams_;
+      status_handler_->OnTelegramReceived();
     }
     // Like the SDK, the cancel only progresses on a live link.
-    if (!stalled_ && cancel_pending_ > 0 && --cancel_pending_ == 0)
+    if (!stalled_ && !link_down_ && cancel_pending_ > 0 && --cancel_pending_ == 0)
     {
       cancelled_ = true;
       cancel_cv_.notify_all();
@@ -262,6 +257,18 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   {
     stalled_ = false;
     RCLCPP_INFO(logger_, "mxA status fake: stream resumed");
+    return true;
+  }
+  if (token == "link_down")
+  {
+    link_down_ = true;
+    RCLCPP_INFO(logger_, "mxA status fake: link down after %" PRIu64 " telegrams", telegrams_);
+    return true;
+  }
+  if (token == "link_up")
+  {
+    link_down_ = false;
+    RCLCPP_INFO(logger_, "mxA status fake: link up");
     return true;
   }
   if (token == "report")
@@ -304,11 +311,7 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   }
   const bool flag = number != 0;
 
-  if (key == "period_ms")
-  {
-    period_ = std::chrono::milliseconds(number);
-  }
-  else if (key == "cancel_cycles")
+  if (key == "cancel_cycles")
   {
     cancel_cycles_ = number;
   }
@@ -381,7 +384,7 @@ void MxaStatusFake::SetDrivesPowered(bool powered)
 void MxaStatusFake::Dispatch()
 {
   std::lock_guard<std::mutex> lk{mtx_};
-  if (stalled_ || !status_handler_)
+  if (stalled_ || link_down_ || !status_handler_)
   {
     return;
   }
@@ -400,6 +403,7 @@ void MxaStatusFake::Dispatch()
   }
   delivered_ = status_;
   ++telegrams_;
+  status_handler_->OnTelegramReceived();
   status_handler_->OnStatusUpdateReceived(delivered_);
 }
 

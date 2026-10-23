@@ -111,6 +111,8 @@ public:
     status_manager_->SetStatusInterfaces(update);
   }
 
+  void OnTelegramReceived() override { status_manager_->StampTelegram(); }
+
 private:
   StatusManager * status_manager_;
 };

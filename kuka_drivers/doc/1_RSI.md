@@ -70,7 +70,9 @@ Besides the parameters the launch arguments set (`controller_ip`, `client_ip`, `
 - `stop_pending_timeout_ms`: how long a stop requested by `on_deactivate`, or by a failed activation, may stay pending, in milliseconds (positive integer, defaults to 3000). Activation is refused while the stop is pending. The stop completes once the controller confirms the RSI program cancel and reports the drives off. On expiry with the cancel confirmed, the stop is treated as complete even if the drives still report powered, which some controller modes never clear; with the cancel not confirmed, activation stays refused and the log says so once. `configure` again to recover.
 - `read_timeout_ms`: how long `read()` waits for the next RSI packet while the component is active, in milliseconds (positive integer, defaults to 12, three 4 ms cycles). On expiry the component stops: it sends nothing, `write()` returns `DEACTIVATE`, the RSI program is cancelled and the drives are turned off through the same requests as `on_deactivate`, and every controller with a command interface on the component is deactivated. The value is logged at startup. Against the `kuka_rsi_simulator`, which cycles at 40 ms, set it to at least 100.
 
-The first four apply to the `eki_rsi` and `mxa_rsi` hardware interfaces; `first_packet_timeout_ms` and `read_timeout_ms` also apply to `rsi_only`.
+- `mxa_status_timeout_ms`: how old the newest mxA telegram may be before the `mxa_rsi` hardware interface treats the link as lost, in milliseconds (positive integer, defaults to 60). It must stay below the SDK's 100 ms mxA receive timeout, or `configure` is refused. Every received telegram is stamped on the mxA thread, changed flags or not, so an idle arm does not age past the bound. On expiry, in every state, `read()` returns `ERROR`: the component goes `unconfigured`, every controller with an interface on it is deactivated, and the mxA client is released. `configure` again to reconnect, then re-activate the state broadcasters.
+
+The first four apply to the `eki_rsi` and `mxa_rsi` hardware interfaces; `first_packet_timeout_ms` and `read_timeout_ms` also apply to `rsi_only`; `mxa_status_timeout_ms` applies to `mxa_rsi` only.
 
 ### Stop reason
 
@@ -81,8 +83,14 @@ The hardware interfaces export `state/stop_reason` (prefixed like `state/server_
 | `0` | none |
 | `1` | no RSI packet within `read_timeout_ms` |
 | `2` | sending an RSI command failed |
+| `3` | emergency stop (`mxa_rsi`) |
+| `4` | guard stop, for example the light curtain (`mxa_rsi`) |
+| `5` | drives not powered (`mxa_rsi`) |
+| `6` | motion not possible (`mxa_rsi`) |
+| `7` | the KRC left EXT (`mxa_rsi`) |
+| `8` | no mxA telegram within `mxa_status_timeout_ms` (`mxa_rsi`) |
 
-The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, and a successful activation resets it to `0`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
+The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause. The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, a reconfigure after an mxA loss leaves it reading `8`, and a successful activation resets it to `0`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
 
 ### I/O configuration
 

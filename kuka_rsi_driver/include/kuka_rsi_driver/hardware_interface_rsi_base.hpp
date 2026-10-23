@@ -65,6 +65,8 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
 
+  KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_error(const rclcpp_lifecycle::State &) override;
+
   KUKA_RSI_DRIVER_PUBLIC
   return_type read(const rclcpp::Time &, const rclcpp::Duration &) override;
 
@@ -82,7 +84,7 @@ protected:
     std::unique_ptr<kuka::external::control::EventHandler> event_handler,
     std::unique_ptr<kuka::external::control::kss::IEventHandlerExtension> extension);
 
-  virtual KUKA_RSI_DRIVER_LOCAL void Read(const int64_t request_timeout);
+  virtual KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout);
 
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
@@ -122,6 +124,9 @@ protected:
 
   // Reads the *_timeout_ms hardware parameters; false when one is set but not a positive integer.
   KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameters();
+
+  KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameter(
+    const char * name, std::chrono::milliseconds fallback, std::chrono::milliseconds & value);
 
   struct InitSequenceReport
   {
@@ -244,9 +249,6 @@ private:
 
   KUKA_RSI_DRIVER_LOCAL bool LoadXmlConfig(
     const std::string & path, kuka::external::control::kss::Configuration & config) const;
-
-  KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameter(
-    const char * name, std::chrono::milliseconds fallback, std::chrono::milliseconds & value);
 
   // Parsed XML config populated during on_init; applied to Configuration in SetupRobot.
   std::optional<kuka::external::control::kss::MotionStateXmlConfiguration> motion_state_xml_config_;
