@@ -15,7 +15,6 @@
 import signal
 import socket
 import sys
-import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -432,7 +431,7 @@ class RSISimulator(Node):
     socket_ = None
     rsi_xml_config_ = None
     ignore_ipoc_ = False
-    late_packet_cycles_ = 0
+    late_packet_remaining_ = 0
     dropped_packet_remaining_ = 0
     repeated_ipoc_remaining_ = 0
 
@@ -455,7 +454,7 @@ class RSISimulator(Node):
             self.get_parameter("rsi_xml_config_file").get_parameter_value().string_value
         )
         self.ignore_ipoc_ = self.get_parameter("ignore_ipoc").get_parameter_value().bool_value
-        self.late_packet_cycles_ = (
+        self.late_packet_remaining_ = (
             self.get_parameter("fault_late_packet_cycles").get_parameter_value().integer_value
         )
         self.dropped_packet_remaining_ = (
@@ -492,7 +491,7 @@ class RSISimulator(Node):
                     )
         for param in params:
             if param.name == "fault_late_packet_cycles":
-                self.late_packet_cycles_ = param.value
+                self.late_packet_remaining_ = param.value
             elif param.name == "fault_dropped_packet_count":
                 self.dropped_packet_remaining_ = param.value
             elif param.name == "fault_repeated_ipoc_count":
@@ -505,11 +504,13 @@ class RSISimulator(Node):
             self.get_logger().warning("Dropped packet injected")
             return
 
-        if self.late_packet_cycles_ > 0:
-            delay_cycles = self.late_packet_cycles_
-            self.late_packet_cycles_ = 0
-            self.get_logger().warning(f"Late packet injected, delaying {delay_cycles} cycle(s)")
-            time.sleep(delay_cycles * self.cycle_time)
+        if self.late_packet_remaining_ > 0:
+            self.late_packet_remaining_ -= 1
+            self.get_logger().warning(
+                f"Late packet injected, deferring send "
+                f"({self.late_packet_remaining_} cycle(s) left)"
+            )
+            return
 
         send_ipoc = self.ipoc
         try:

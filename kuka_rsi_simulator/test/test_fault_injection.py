@@ -93,68 +93,75 @@ class FaultInjectionTestCase(unittest.TestCase):
 
     def _on_state(self, msg):
         root = ET.fromstring(msg.data)
-        ipoc = int(root.find("IPOC").text)
-        self.states.append((time.monotonic(), ipoc))
+        self.states.append(int(root.find("IPOC").text))
 
     def _spin_for(self, seconds):
         end = time.monotonic() + seconds
         while time.monotonic() < end:
             rclpy.spin_once(self.node, timeout_sec=0.05)
 
+    def _run_cycles(self, count):
+        """Drive the node's timer callback directly, bypassing the ROS timer.
+
+        Each call either publishes synchronously or returns having skipped
+        the cycle, so a bounded spin_once after it only ever flushes the one
+        message that call may have produced; nothing here depends on gaps
+        between invocations.
+        """
+        for _ in range(count):
+            self.node.timer_callback()
+            rclpy.spin_once(self.node, timeout_sec=0.5)
+
     def _set_fault(self, name, value):
         result = self.node.set_parameters([Parameter(name, value=value)])[0]
         self.assertTrue(result.successful, result.reason)
 
+    def _assert_contiguous(self):
+        self.assertEqual(
+            self.states, list(range(self.states[0], self.states[0] + len(self.states)))
+        )
+
     def test_default_behavior_is_unchanged(self):
-        self._spin_for(6 * CYCLE_TIME)
-        self.assertGreaterEqual(len(self.states), 4)
-        ipocs = [ipoc for _, ipoc in self.states]
-        self.assertEqual(ipocs, list(range(ipocs[0], ipocs[0] + len(ipocs))))
-        gaps = [b - a for (a, _), (b, _) in zip(self.states, self.states[1:])]
-        for gap in gaps:
-            self.assertLess(gap, 2 * CYCLE_TIME)
+        self._run_cycles(6)
+        self.assertEqual(len(self.states), 6)
+        self._assert_contiguous()
 
     def test_simulator_injects_late_packet(self):
-        self._spin_for(3 * CYCLE_TIME)
-        self._set_fault("fault_late_packet_cycles", 3)
+        self._run_cycles(3)
         before = len(self.states)
-        self._spin_for(8 * CYCLE_TIME)
-        self.assertGreater(len(self.states), before)
+        self._set_fault("fault_late_packet_cycles", 3)
 
-        gaps = [b - a for (a, _), (b, _) in zip(self.states, self.states[1:])]
-        self.assertTrue(
-            any(gap >= 2.5 * CYCLE_TIME for gap in gaps),
-            f"no delayed gap observed, gaps={gaps}",
-        )
-        # The late packet is delayed, not skipped: IPOCs stay contiguous.
-        ipocs = [ipoc for _, ipoc in self.states]
-        self.assertEqual(ipocs, list(range(ipocs[0], ipocs[0] + len(ipocs))))
+        # The deferred cycles publish nothing: the count doesn't move.
+        self._run_cycles(3)
+        self.assertEqual(len(self.states), before)
+
+        # The deferred send goes out on the next cycle, IPOCs stay contiguous.
+        self._run_cycles(1)
+        self.assertEqual(len(self.states), before + 1)
+        self._assert_contiguous()
 
     def test_simulator_injects_dropped_packet(self):
-        self._spin_for(3 * CYCLE_TIME)
-        self._set_fault("fault_dropped_packet_count", 2)
+        self._run_cycles(3)
         before = len(self.states)
-        self._spin_for(8 * CYCLE_TIME)
-        self.assertGreater(len(self.states), before)
+        self._set_fault("fault_dropped_packet_count", 2)
 
-        gaps = [b - a for (a, _), (b, _) in zip(self.states, self.states[1:])]
-        self.assertTrue(
-            any(gap >= 2.5 * CYCLE_TIME for gap in gaps),
-            f"no dropped-cycle gap observed, gaps={gaps}",
-        )
-        # The dropped cycles are skipped, not replayed: IPOCs stay contiguous.
-        ipocs = [ipoc for _, ipoc in self.states]
-        self.assertEqual(ipocs, list(range(ipocs[0], ipocs[0] + len(ipocs))))
+        # The dropped cycles publish nothing: the count doesn't move.
+        self._run_cycles(2)
+        self.assertEqual(len(self.states), before)
+
+        # Normal sending resumes on the next cycle, IPOCs stay contiguous.
+        self._run_cycles(1)
+        self.assertEqual(len(self.states), before + 1)
+        self._assert_contiguous()
 
     def test_simulator_injects_repeated_ipoc(self):
         self._spin_for(3 * CYCLE_TIME)
         self._set_fault("fault_repeated_ipoc_count", 3)
         self._spin_for(8 * CYCLE_TIME)
 
-        ipocs = [ipoc for _, ipoc in self.states]
-        run_lengths = [len(list(group)) for _, group in itertools.groupby(ipocs)]
+        run_lengths = [len(list(group)) for _, group in itertools.groupby(self.states)]
         # The armed IPOC is sent once normally, then repeated 3 more times.
-        self.assertTrue(4 in run_lengths, f"no run of 4 identical IPOCs, ipocs={ipocs}")
+        self.assertTrue(4 in run_lengths, f"no run of 4 identical IPOCs, ipocs={self.states}")
         self.assertTrue(all(length == 1 for length in run_lengths if length != 4))
 
 
