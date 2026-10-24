@@ -153,13 +153,9 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_deactivate(const rclcpp_lifecycle
   return KukaRSIHardwareInterfaceBase::extended_deactivation(state);
 }
 
-// A silent mxA link is a connection loss in every state; ERROR releases the client.
+// ERROR releases the client; the mxA-loss label belongs only to read()'s own timeout latch.
 CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::State & state)
 {
-  if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
-  {
-    RCLCPP_ERROR(logger_, "Stopping: hardware error, treated as an mxA connection loss");
-  }
   RCLCPP_ERROR(
     logger_, "Releasing the mxA client, stop_reason reads '%s'; configure again to reconnect",
     kuka_drivers_core::StopReasonName(event_state_.stop_reason.load()));
@@ -175,6 +171,7 @@ return_type KukaMxaRsiHardwareInterface::read(
   {
     if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
     {
+      set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
       RCLCPP_ERROR(
         logger_, "Stopping: no mxA telegram within %ld ms, the newest is %ld ms old",
         static_cast<int64_t>(mxa_status_timeout_.count()), static_cast<int64_t>(age.count()));
@@ -195,7 +192,7 @@ return_type KukaMxaRsiHardwareInterface::read(
 bool KukaMxaRsiHardwareInterface::LatchStatusStop()
 {
   using kuka_drivers_core::StopReason;
-  auto & status = control_state_.status_manager;
+  auto status = control_state_.status_manager.Snapshot();
 
   StopReason reason = StopReason::NONE;
   if (status.IsEmergencyStopActive())
@@ -214,7 +211,7 @@ bool KukaMxaRsiHardwareInterface::LatchStatusStop()
   {
     reason = StopReason::MOTION_NOT_POSSIBLE;
   }
-  else if (!status.IsKrcInExtMode())
+  else if (!status.IsOperationModeExt())
   {
     reason = StopReason::NOT_IN_EXT;
   }

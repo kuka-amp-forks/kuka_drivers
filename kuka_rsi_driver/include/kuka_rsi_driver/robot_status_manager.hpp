@@ -164,6 +164,13 @@ public:
     return status_interfaces_.Describe();
   }
 
+  // One consistent copy of all flags, for callers that would otherwise take the lock per flag.
+  StatusInterfaces Snapshot()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_interfaces_;
+  }
+
   // Called on the mxA thread for every received telegram, changed flags or not.
   void StampTelegram()
   {
