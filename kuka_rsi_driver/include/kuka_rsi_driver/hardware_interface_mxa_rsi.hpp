@@ -78,6 +78,7 @@ private:
 
   // Bound on the age of the newest mxA telegram, below the SDK's own 100 ms receive timeout.
   static constexpr std::chrono::milliseconds DEFAULT_MXA_STATUS_TIMEOUT{60};
+  // Mirrors kuka::external::control::kss::mxa::Client::kUDPTimeoutMs (client.h); keep in sync.
   static constexpr std::chrono::milliseconds SDK_MXA_RECEIVE_TIMEOUT{100};
   std::chrono::milliseconds mxa_status_timeout_{DEFAULT_MXA_STATUS_TIMEOUT};
 

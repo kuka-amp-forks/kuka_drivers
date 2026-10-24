@@ -84,6 +84,7 @@ protected:
     std::unique_ptr<kuka::external::control::EventHandler> event_handler,
     std::unique_ptr<kuka::external::control::kss::IEventHandlerExtension> extension);
 
+  // Exported: the test plugin's vtable needs it since the mxA class no longer overrides it.
   virtual KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout);
 
   // False when the send failed; the caller decides whether that stops the component.
