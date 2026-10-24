@@ -58,8 +58,11 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
         self.publish_is_configured()
         self.inject(f"unfreeze_status drives_stuck=0 cancel_cycles={CANCEL_CYCLES}")
 
-    def deactivate_then_activate_at_once(self, log):
+    def deactivate_then_activate_at_once(self, log, wait_for_respawn=False):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        if wait_for_respawn:
+            # The stop packet may have just killed the simulator; let it rebind if so.
+            self.wait_for_simulator_respawn_if_any(log)
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activated")
         self.assertTrue(log.wait_for(STOP_PENDING_FAILURE, timeout=5), "cause not named")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
@@ -119,7 +122,7 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
         self.inject("drives_stuck=1")
 
         log = LogCursor(proc_output)
-        self.deactivate_then_activate_at_once(log)
+        self.deactivate_then_activate_at_once(log, wait_for_respawn=True)
         self.assertTrue(
             log.wait_for(
                 f"{STOP_COMPLETE_DRIVES_ON_LINE} after {STOP_PENDING_TIMEOUT_MS} ms",

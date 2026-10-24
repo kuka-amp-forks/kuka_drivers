@@ -247,10 +247,20 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
 
-    def wait_for_simulator_respawn(self, log):
-        """After a stop packet, let the respawned simulator start before the launch ends."""
-        self.assertTrue(log.wait_for("rsi_port:", timeout=10), "simulator did not respawn")
-        self._spin_for(0.5)
+    def wait_for_simulator_respawn(self, log, timeout=10):
+        """
+        Wait for the respawned simulator's socket to be bound before anything depends on it.
+
+        "rsi_port:" alone is not enough: it comes from the parameter dump before the socket
+        is created, so a deactivate or activate started right after it can still race the
+        respawn (packet gaps, or a bind collision if a second respawn follows too soon).
+        """
+        self.assertTrue(log.wait_for("Started", timeout=timeout), "simulator did not respawn")
+
+    def wait_for_simulator_respawn_if_any(self, log, timeout=3):
+        """Like wait_for_simulator_respawn, but a deactivate with no RSI packet in flight never
+        sends a stop flag, so the simulator does not always restart; do not fail if it doesn't."""
+        log.wait_for("Started", timeout=timeout)
 
     def activate_and_stream(self, log, seconds=1.0):
         """Inject EXT with drives on, activate, and let a few RSI cycles stream."""
