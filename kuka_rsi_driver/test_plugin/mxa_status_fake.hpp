@@ -60,7 +60,7 @@ public:
   Status StopControlling() override;
   Status CancelRsiProgram() override;
   Status RequestRsiProgramCancel() override;
-  bool IsRsiProgramCancelled() override;
+  bool IsRsiProgramCancelled() const override;
   Status TurnOnDrives() override;
   Status TurnOffDrives() override;
   Status SetCycleTime(kuka::external::control::kss::CycleTime) override;
@@ -85,7 +85,7 @@ private:
   std::atomic<bool> running_{false};
   bool rsi_running_ = false;
 
-  std::mutex mtx_;
+  mutable std::mutex mtx_;
   StatusUpdate status_;
   StatusUpdate delivered_;
   bool stalled_ = false;

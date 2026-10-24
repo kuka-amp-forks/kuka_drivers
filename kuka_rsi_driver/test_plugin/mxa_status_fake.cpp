@@ -131,7 +131,7 @@ MxaStatusFake::Status MxaStatusFake::RequestRsiProgramCancel()
   return {ReturnCode::OK, "RSI program cancel requested"};
 }
 
-bool MxaStatusFake::IsRsiProgramCancelled()
+bool MxaStatusFake::IsRsiProgramCancelled() const
 {
   std::lock_guard<std::mutex> lk{mtx_};
   return cancelled_;
