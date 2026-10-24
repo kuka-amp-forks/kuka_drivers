@@ -15,6 +15,7 @@
 import signal
 import socket
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -526,20 +527,32 @@ class RSISimulator(Node):
             )
             self.rsi_act_pub_.publish(String(data=msg.decode("utf-8")))
             self.socket_.sendto(msg, (self.rsi_ip_address_, self.rsi_port_address_))
-            recv_msg, _ = self.socket_.recvfrom(1024)
+            deadline = time.monotonic() + self.cycle_time
+            stale = 0
+            while True:
+                self.socket_.settimeout(max(deadline - time.monotonic(), 0.0))
+                recv_msg, _ = self.socket_.recvfrom(1024)
+                (
+                    des_joint_correction_absolute,
+                    des_joint_velocity,
+                    des_joint_torque,
+                    ipoc_recv,
+                    stop_flag,
+                ) = parse_rsi_xml_sen(recv_msg, self.rsi_xml_config_)
+                if stop_flag or self.ignore_ipoc_ or ipoc_recv == send_ipoc:
+                    break
+                # A reply to an earlier packet; the one for this packet may still arrive.
+                stale += 1
+            if stale:
+                self.get_logger().warning(
+                    f"Discarded {stale} stale reply(ies) before ipoc {send_ipoc}"
+                )
             self.rsi_cmd_pub_.publish(String(data=recv_msg.decode("utf-8")))
             self.get_logger().warning(f"msg: {recv_msg}")
-            (
-                des_joint_correction_absolute,
-                des_joint_velocity,
-                des_joint_torque,
-                ipoc_recv,
-                stop_flag,
-            ) = parse_rsi_xml_sen(recv_msg, self.rsi_xml_config_)
             self.act_joint_pos = self.initial_joint_pos + des_joint_correction_absolute
             self.act_joint_vel = des_joint_velocity
             self.act_joint_torque = des_joint_torque
-            if not self.ignore_ipoc_ and ipoc_recv != send_ipoc:
+            if not self.ignore_ipoc_ and not stop_flag and ipoc_recv != send_ipoc:
                 self.get_logger().warning("Packet is late")
                 self.get_logger().warning(f"sent ipoc: {send_ipoc}, received: {ipoc_recv}")
                 if send_ipoc != 0:
