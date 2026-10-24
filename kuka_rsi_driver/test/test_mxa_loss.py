@@ -81,9 +81,16 @@ class TestMxaLoss(RsiFaultTestCase):
         self.switch(activate=[JTC])
         self.move_joint_and_wait()
 
+        log = LogCursor(proc_output)
+        self.switch(deactivate=[JTC])
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.wait_for_simulator_respawn(log)
+
     def test_unchanged_status_does_not_error(self, proc_output):
-        # Runs after the loss test, with the component active and JTC active.
-        self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
+        log = LogCursor(proc_output)
+        self.start_streaming(log)
+
         log = LogCursor(proc_output)
         self.inject("freeze_status")
         self.assertTrue(log.wait_for("mxA status fake: status frozen", timeout=5))
