@@ -75,6 +75,12 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC void set_server_event(kuka_drivers_core::HardwareEvent);
 
+  // No-op here; the mxA interface overrides it to latch e-stop/guard stop in any state.
+  virtual KUKA_RSI_DRIVER_PUBLIC void OnStatusUpdate(
+    const kuka::external::control::kss::StatusUpdate &)
+  {
+  }
+
 protected:
   // First cause wins; true when this call set it. write() returns DEACTIVATE while it is set.
   KUKA_RSI_DRIVER_LOCAL bool LatchStopReason(kuka_drivers_core::StopReason reason);
@@ -174,7 +180,8 @@ protected:
   struct RuntimeState
   {
     std::vector<int> gpio_states_to_commands_map;
-    bool is_active = false;
+    // Read by the mxA status thread, written by the lifecycle thread.
+    std::atomic<bool> is_active{false};
     bool msg_received = false;
     // Set by on_deactivate, cleared by read() once the cancel is confirmed and the drives are off.
     bool stop_pending = false;

@@ -75,6 +75,11 @@ STATUS_STOP_LINE = re.compile(
     r"Stopping: ([a-zA-Z ]+) \((emergency_stop=\d guard_stop=\d drives_powered=\d "
     r"motion_possible=\d operation_mode=\d+), IPOC (\d+)\)"
 )
+# e-stop/guard stop, latched from the mxA thread itself regardless of lifecycle state.
+ANY_STATE_STOP_LINE = re.compile(
+    r"Stopping: ([a-zA-Z ]+) \(emergency_stop=(\d) guard_stop=(\d)\), "
+    r"independent of the component's state"
+)
 MXA_LOSS_LINE = re.compile(
     r"Stopping: no mxA telegram within (\d+) ms, the newest is (\d+) ms old"
 )
@@ -305,6 +310,7 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
 
 
 __all__ = [
+    "ANY_STATE_STOP_LINE",
     "COMPONENT",
     "JSB",
     "JTC",

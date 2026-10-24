@@ -68,6 +68,10 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC void mxa_init(const InitializationData &);
 
+  // Latches e-stop/guard stop from the mxA thread itself, in any lifecycle state.
+  KUKA_RSI_DRIVER_PUBLIC void OnStatusUpdate(
+    const kuka::external::control::kss::StatusUpdate & update) override;
+
 protected:
   KUKA_RSI_DRIVER_LOCAL void CreateRobotInstance(
     const kuka::external::control::kss::Configuration &) override;

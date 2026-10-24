@@ -104,17 +104,22 @@ private:
 class StatusUpdateHandler : public kuka::external::control::kss::IStatusUpdateHandler
 {
 public:
-  explicit StatusUpdateHandler(StatusManager * status_manager) : status_manager_{status_manager} {}
+  StatusUpdateHandler(StatusManager * status_manager, KukaRSIHardwareInterfaceBase * hw_interface)
+  : status_manager_{status_manager}, hw_interface_{hw_interface}
+  {
+  }
 
   void OnStatusUpdateReceived(const kuka::external::control::kss::StatusUpdate & update) override
   {
     status_manager_->SetStatusInterfaces(update);
+    hw_interface_->OnStatusUpdate(update);
   }
 
   void OnTelegramReceived() override { status_manager_->StampTelegram(); }
 
 private:
   StatusManager * status_manager_;
+  KukaRSIHardwareInterfaceBase * hw_interface_;
 };
 
 }  // namespace kuka_rsi_driver

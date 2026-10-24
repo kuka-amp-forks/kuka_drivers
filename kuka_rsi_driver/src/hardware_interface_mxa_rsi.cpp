@@ -103,7 +103,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     mxa_config.client_port);
 
   auto status = robot_ptr_->RegisterStatusResponseHandler(
-    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager));
+    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager, this));
   if (status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Registering status response handler failed: %s", status.message);
@@ -181,7 +181,7 @@ return_type KukaMxaRsiHardwareInterface::read(
   }
 
   control_state_.status_manager.UpdateStateInterfaces();
-  if (runtime_state_.is_active)
+  if (runtime_state_.is_active.load(std::memory_order_relaxed))
   {
     LatchStatusStop();
   }
@@ -225,6 +225,40 @@ bool KukaMxaRsiHardwareInterface::LatchStatusStop()
     logger_, "Stopping: %s (%s, IPOC %lu)", kuka_drivers_core::StopReasonName(reason),
     status.Describe().c_str(), diagnostics_state_.last_ipoc);
   return true;
+}
+
+// E-stop/guard stop are faults in any state; drives/motion/EXT stay ACTIVE-only (LatchStatusStop).
+// While active, LatchStatusStop (called from read()) already covers e-stop/guard stop with the
+// full status and IPOC in the log; this only fills the gap for every other state.
+void KukaMxaRsiHardwareInterface::OnStatusUpdate(
+  const kuka::external::control::kss::StatusUpdate & update)
+{
+  using kuka_drivers_core::StopReason;
+
+  if (runtime_state_.is_active.load(std::memory_order_relaxed))
+  {
+    return;
+  }
+
+  StopReason reason = StopReason::NONE;
+  if (update.emergency_stop_)
+  {
+    reason = StopReason::EMERGENCY_STOP;
+  }
+  else if (update.guard_stop_)
+  {
+    reason = StopReason::GUARD_STOP;
+  }
+
+  if (reason == StopReason::NONE || !LatchStopReason(reason))
+  {
+    return;
+  }
+  set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+  RCLCPP_ERROR(
+    logger_, "Stopping: %s (emergency_stop=%d guard_stop=%d), independent of the component's state",
+    kuka_drivers_core::StopReasonName(reason), static_cast<int>(update.emergency_stop_),
+    static_cast<int>(update.guard_stop_));
 }
 
 void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)

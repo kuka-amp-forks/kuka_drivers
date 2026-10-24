@@ -287,11 +287,13 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::
 // Nothing waits on a dead link; the next configure makes a new client.
 CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::State &)
 {
-  if (runtime_state_.is_active && runtime_state_.msg_received && robot_ptr_)
+  if (
+    runtime_state_.is_active.load(std::memory_order_relaxed) && runtime_state_.msg_received &&
+    robot_ptr_)
   {
     robot_ptr_->kuka::external::control::kss::rsi::Robot::StopControlling();
   }
-  runtime_state_.is_active = false;
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
   runtime_state_.stop_pending = false;
   runtime_state_.cancel_confirmed = false;
@@ -310,7 +312,7 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
 
   // The first packet is received at activation, Read() should not be called before
   // Add short sleep to avoid RT thread eating CPU
-  if (!runtime_state_.is_active)
+  if (!runtime_state_.is_active.load(std::memory_order_relaxed))
   {
     if (runtime_state_.stop_pending)
     {
@@ -810,7 +812,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   }
 
   runtime_state_.msg_received = false;
-  runtime_state_.is_active = true;
+  runtime_state_.is_active.store(true, std::memory_order_relaxed);
   ResetStopReason();
 
   RCLCPP_INFO(
@@ -856,7 +858,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
     }
   }
   const auto stop_time = std::chrono::steady_clock::now();
-  runtime_state_.is_active = false;
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
 
   RequestStop();
