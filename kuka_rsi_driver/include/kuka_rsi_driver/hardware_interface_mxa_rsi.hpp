@@ -66,6 +66,9 @@ public:
   KUKA_RSI_DRIVER_PUBLIC
   return_type read(const rclcpp::Time &, const rclcpp::Duration &) override;
 
+  KUKA_RSI_DRIVER_PUBLIC
+  return_type write(const rclcpp::Time &, const rclcpp::Duration &) override;
+
   KUKA_RSI_DRIVER_PUBLIC void mxa_init(const InitializationData &);
 
   // Latches e-stop/guard stop from the mxA thread itself, in any lifecycle state.
@@ -85,6 +88,8 @@ private:
   // Mirrors kuka::external::control::kss::mxa::Client::kUDPTimeoutMs (client.h); keep in sync.
   static constexpr std::chrono::milliseconds SDK_MXA_RECEIVE_TIMEOUT{100};
   std::chrono::milliseconds mxa_status_timeout_{DEFAULT_MXA_STATUS_TIMEOUT};
+  // Set once read() has exported an mxA loss as server_state; the next write() or read() errors.
+  bool mxa_loss_exported_ = false;
 
   InitSequenceReport init_report_;
   std::mutex init_mtx_;

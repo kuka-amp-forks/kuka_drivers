@@ -85,6 +85,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   mxa_config.client_port = std::stoi(info_.hardware_parameters.at("client_port"));
   mxa_config.mxa_client_port = std::stoi(info_.hardware_parameters.at("mxa_client_port"));
 
+  mxa_loss_exported_ = false;
   {
     std::lock_guard<std::mutex> lk{init_mtx_};
     init_report_ = {};
@@ -171,13 +172,19 @@ return_type KukaMxaRsiHardwareInterface::read(
   {
     if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
     {
-      set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
       RCLCPP_ERROR(
         logger_, "Stopping: no mxA telegram within %ld ms, the newest is %ld ms old",
         static_cast<int64_t>(mxa_status_timeout_.count()), static_cast<int64_t>(age.count()));
     }
-    UpdateStopReasonState();
-    return return_type::ERROR;
+    if (mxa_loss_exported_)
+    {
+      UpdateStopReasonState();
+      return return_type::ERROR;
+    }
+    // Export the error for one cycle so the event broadcaster publishes it before ERROR.
+    mxa_loss_exported_ = true;
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    return KukaRSIHardwareInterfaceBase::read(time, duration);
   }
 
   control_state_.status_manager.UpdateStateInterfaces();
@@ -187,6 +194,17 @@ return_type KukaMxaRsiHardwareInterface::read(
   }
 
   return KukaRSIHardwareInterfaceBase::read(time, duration);
+}
+
+// An exported mxA loss errors the component rather than deactivating it.
+return_type KukaMxaRsiHardwareInterface::write(
+  const rclcpp::Time & time, const rclcpp::Duration & duration)
+{
+  if (mxa_loss_exported_)
+  {
+    return return_type::ERROR;
+  }
+  return KukaRSIHardwareInterfaceBase::write(time, duration);
 }
 
 bool KukaMxaRsiHardwareInterface::LatchStatusStop()
