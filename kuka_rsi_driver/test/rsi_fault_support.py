@@ -29,6 +29,7 @@ from controller_manager_msgs.srv import (
     SetHardwareComponentState,
     SwitchController,
 )
+from kuka_driver_interfaces.msg import HardwareEvent
 from lifecycle_msgs.msg import State
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
@@ -47,6 +48,10 @@ from mxa_status_fake_support import (  # noqa: E402
 JTC = "joint_trajectory_controller"
 JSB = "joint_state_broadcaster"
 STOP_REASON_BROADCASTER = "stop_reason_broadcaster"
+EVENT_BROADCASTER = "event_broadcaster"
+
+# kuka_drivers_core::HardwareEvent::ERROR, as published on the event broadcaster's topic.
+HARDWARE_EVENT_ERROR = 6
 
 # Values of the state/stop_reason interface (kuka_drivers_core::StopReason).
 STOP_REASON_NONE = 0.0
@@ -92,7 +97,7 @@ def _spawner(name, param_file=None, inactive=False):
 
 
 def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS):
-    """control_node on the fake with JSB active, JTC inactive and the stop_reason broadcaster."""
+    """control_node on the fake: JTC inactive; JSB, stop_reason and event broadcasters active."""
     description = {"robot_description": robot_description(read_timeout_ms=read_timeout_ms)}
 
     control_node = launch_ros.actions.Node(
@@ -128,6 +133,7 @@ def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS):
             _spawner(JSB),
             _spawner(JTC, _config("joint_trajectory_controller_config.yaml"), inactive=True),
             _spawner(STOP_REASON_BROADCASTER, _test_config("stop_reason_broadcaster.yaml")),
+            _spawner(EVENT_BROADCASTER, _config("kuka_event_broadcaster_config.yaml")),
             launch_testing.actions.ReadyToTest(),
         ]
     )
@@ -143,13 +149,20 @@ def _stop_flag(xml_text):
 
 
 class RsiFaultTestCase(MxaStatusFakeTestCase):
-    """MxaStatusFakeTestCase that tracks stop_reason and the simulator's IPOC traffic."""
+    """MxaStatusFakeTestCase that tracks stop_reason, hardware events and the simulator's IPOCs."""
 
     def setUp(self):
         super().setUp()
         self.stop_reason_value = None
+        self.hardware_events = []
         self.state_ipocs = []
         self.commands = []
+        self.node.create_subscription(
+            HardwareEvent,
+            f"/{EVENT_BROADCASTER}/hardware_event",
+            lambda msg: self.hardware_events.append(msg.event),
+            10,
+        )
         self.node.create_subscription(
             DynamicInterfaceGroupValues,
             f"/{STOP_REASON_BROADCASTER}/gpio_states",
@@ -279,6 +292,8 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
 
 __all__ = [
     "COMPONENT",
+    "EVENT_BROADCASTER",
+    "HARDWARE_EVENT_ERROR",
     "JSB",
     "JTC",
     "JTC_DEACTIVATED_LINE",
