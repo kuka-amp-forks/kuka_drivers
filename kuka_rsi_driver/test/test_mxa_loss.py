@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A silent mxA link errors the active component to UNCONFIGURED; unchanged flags do not."""
+"""A silent mxA link is published as an error, then errors the component to UNCONFIGURED."""
 
 import os
 import sys
@@ -25,6 +25,8 @@ from lifecycle_msgs.msg import State
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rsi_fault_support import (  # noqa: E402
+    EVENT_BROADCASTER,
+    HARDWARE_EVENT_ERROR,
     JSB,
     JTC,
     MXA_LOSS_LINE,
@@ -42,6 +44,8 @@ from rsi_fault_support import (  # noqa: E402
 MXA_STATUS_TIMEOUT_MS = 60
 # Long enough for the bound to expire many times over on an idle but healthy stream.
 UNCHANGED_S = 2.0
+# What on_deactivate logs when it answers a packet with the stop flag.
+ON_DEACTIVATE_LINE = "Deactivating hardware interface"
 
 
 @pytest.mark.launch_test
@@ -51,6 +55,29 @@ def generate_test_description():
 
 
 class TestMxaLoss(RsiFaultTestCase):
+    def assert_loss_published_then_errored(self, log):
+        """
+        Check the error event went out before the component errored to UNCONFIGURED.
+
+        The controller manager deactivates the event broadcaster with the component, so an
+        event that arrives at all was published while the component was still up.
+        """
+        self.assertTrue(
+            self._spin_until(lambda: HARDWARE_EVENT_ERROR in self.hardware_events, timeout=5),
+            f"no error event on the event broadcaster, saw {self.hardware_events}",
+        )
+        self.wait_for_component_state(State.PRIMARY_STATE_UNCONFIGURED)
+        self.assertTrue(log.wait_for(MXA_RELEASED_LINE, timeout=5), "client not released")
+        self.assertEqual(self.controller_state(EVENT_BROADCASTER), "inactive")
+        self.assertFalse(
+            log.wait_for(ON_DEACTIVATE_LINE, timeout=0.1), "loss went through DEACTIVATE"
+        )
+
+    def prepare_for_loss(self):
+        """Start from INACTIVE with the broadcasters active, whatever an earlier test left."""
+        self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
+        self.ensure_controllers_active(JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER)
+
     def test_loss_while_active_errors_to_unconfigured(self, proc_output):
         log = LogCursor(proc_output)
         self.start_streaming(log)
@@ -86,6 +113,43 @@ class TestMxaLoss(RsiFaultTestCase):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)
+
+    def test_loss_while_active_publishes_error_event(self, proc_output):
+        log = LogCursor(proc_output)
+        self.prepare_for_loss()
+        self.start_streaming(log)
+
+        log = LogCursor(proc_output)
+        self.hardware_events.clear()
+        self.inject("link_down")
+        self.assert_loss_published_then_errored(log)
+        # on_error answered the last packet with the stop flag.
+        self.wait_for_simulator_respawn(log)
+
+        self.inject("link_up")
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
+        self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
+
+    def test_loss_while_inactive_publishes_error_event(self, proc_output):
+        log = LogCursor(proc_output)
+        self.prepare_for_loss()
+        self.start_streaming(log)
+        self.switch(deactivate=[JTC])
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.wait_for_simulator_respawn(log)
+
+        # A first loss, then a second one after the reconfigure, with stop_reason still at 8.
+        for held in (STOP_REASON_NONE, STOP_REASON_MXA_CONNECTION_LOST):
+            self.assertEqual(self.stop_reason(), held)
+            log = LogCursor(proc_output)
+            self.hardware_events.clear()
+            self.inject("link_down")
+            self.assert_loss_published_then_errored(log)
+
+            self.inject("link_up")
+            self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
+            self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
 
     def test_unchanged_status_does_not_error(self, proc_output):
         log = LogCursor(proc_output)
