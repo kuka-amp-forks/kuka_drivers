@@ -562,6 +562,8 @@ class RSISimulator(Node):
             else:
                 self.ipoc += 1
             if stop_flag:
+                # Already exiting; a SIGINT during the teardown must not end it with -2.
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
                 self.on_shutdown()
                 sys.exit()
         except OSError:
