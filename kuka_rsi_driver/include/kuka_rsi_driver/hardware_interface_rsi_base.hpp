@@ -79,6 +79,12 @@ public:
   KUKA_RSI_DRIVER_PUBLIC void OnControlEvent(
     kuka_drivers_core::StopReason reason, const std::string & detail);
 
+  // Joint position is the only command mode.
+  KUKA_RSI_DRIVER_PUBLIC
+  return_type prepare_command_mode_switch(
+    const std::vector<std::string> & start_interfaces,
+    const std::vector<std::string> & stop_interfaces) override;
+
   // No-op here; the mxA interface overrides it to latch e-stop/guard stop in any state.
   virtual KUKA_RSI_DRIVER_PUBLIC void OnStatusUpdate(
     const kuka::external::control::kss::StatusUpdate &)

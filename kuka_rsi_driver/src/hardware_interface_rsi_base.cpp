@@ -380,6 +380,28 @@ void KukaRSIHardwareInterfaceBase::OnControlEvent(
     logger_, "Stopping: %s: %s", kuka_drivers_core::StopReasonName(reason), detail.c_str());
 }
 
+return_type KukaRSIHardwareInterfaceBase::prepare_command_mode_switch(
+  const std::vector<std::string> & start_interfaces, const std::vector<std::string> &)
+{
+  // GPIO commands are not a mode, so only the joint interfaces are checked.
+  for (const auto & joint : info_.joints)
+  {
+    const std::string prefix = joint.name + "/";
+    for (const auto & name : start_interfaces)
+    {
+      if (name.rfind(prefix, 0) == 0 && name != prefix + hardware_interface::HW_IF_POSITION)
+      {
+        RCLCPP_ERROR(
+          logger_,
+          "Refusing the command mode switch: '%s' requested, only joint position is supported",
+          name.c_str());
+        return return_type::ERROR;
+      }
+    }
+  }
+  return return_type::OK;
+}
+
 bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
 {
   auto expected = kuka_drivers_core::StopReason::NONE;
