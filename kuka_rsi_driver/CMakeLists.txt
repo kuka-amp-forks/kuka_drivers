@@ -127,6 +127,7 @@ if(BUILD_TESTING)
   add_launch_test(test/test_status_latches_while_inactive.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_rejects_staleness_bound_at_sdk_timeout.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_sdk_events_deactivate.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_refuses_unsupported_mode_switch.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_exports_no_runtime_config.py
     TARGET test_exports_no_runtime_config_mxa_rsi ARGS "driver_version:=mxa_rsi")
   add_launch_test(test/test_exports_no_runtime_config.py

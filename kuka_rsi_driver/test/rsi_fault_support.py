@@ -126,12 +126,15 @@ def _spawner(name, param_file=None, inactive=False):
     )
 
 
-def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS, respawn_simulator=False):
+def fault_launch_description(
+    read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS, respawn_simulator=False, inactive_controllers=()
+):
     """
     control_node on the fake: JTC inactive; JSB, stop_reason and event broadcasters active.
 
     The simulator exits on the stop flag, so a test that reactivates after a stop packet
     needs it respawned; it comes back silent, and resume_and_activate resumes it.
+    inactive_controllers are (name, file in test/config) pairs, loaded inactive.
     """
     description = {"robot_description": robot_description(read_timeout_ms=read_timeout_ms)}
 
@@ -171,6 +174,10 @@ def fault_launch_description(read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS, respawn_
             _spawner(JTC, _config("joint_trajectory_controller_config.yaml"), inactive=True),
             _spawner(STOP_REASON_BROADCASTER, _test_config("stop_reason_broadcaster.yaml")),
             _spawner(EVENT_BROADCASTER, _config("kuka_event_broadcaster_config.yaml")),
+            *[
+                _spawner(name, _test_config(param_file), inactive=True)
+                for name, param_file in inactive_controllers
+            ],
             launch_testing.actions.ReadyToTest(),
         ]
     )
