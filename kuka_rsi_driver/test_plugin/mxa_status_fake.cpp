@@ -23,6 +23,7 @@
 #include <array>
 #include <cinttypes>
 #include <sstream>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -30,6 +31,11 @@ namespace kuka_rsi_driver
 {
 
 using kuka::external::control::ReturnCode;
+
+namespace
+{
+constexpr std::chrono::milliseconds kTelegramPeriod{10};
+}  // namespace
 
 MxaStatusFake::MxaStatusFake(
   const kuka::external::control::kss::Configuration & config, uint16_t port, rclcpp::Logger logger)
@@ -147,6 +153,13 @@ bool MxaStatusFake::IsRsiProgramCancelled() const
   return cancelled_;
 }
 
+// A telegram is due once a period has passed since the last one this side received.
+bool MxaStatusFake::IsStatusTelegramPending() const
+{
+  std::lock_guard<std::mutex> lk{mtx_};
+  return !link_down_ && std::chrono::steady_clock::now() - last_delivery_ >= kTelegramPeriod;
+}
+
 MxaStatusFake::Status MxaStatusFake::TurnOnDrives()
 {
   SetDrivesPowered(true);
@@ -203,7 +216,7 @@ void MxaStatusFake::Serve()
   while (running_)
   {
     pollfd pfd{fd_, POLLIN, 0};
-    if (poll(&pfd, 1, 10) > 0)
+    if (poll(&pfd, 1, static_cast<int>(kTelegramPeriod.count())) > 0)
     {
       const auto n = recv(fd_, buf.data(), buf.size() - 1, 0);
       if (n > 0)
@@ -212,10 +225,22 @@ void MxaStatusFake::Serve()
       }
     }
 
+    std::chrono::steady_clock::time_point stall_until;
+    {
+      std::lock_guard<std::mutex> lk{mtx_};
+      stall_until = stall_until_;
+    }
+    if (std::chrono::steady_clock::now() < stall_until)
+    {
+      std::this_thread::sleep_until(stall_until);
+      RCLCPP_INFO(logger_, "mxA status fake: receive resumed");
+    }
+
     std::lock_guard<std::mutex> lk{mtx_};
     if (!link_down_ && status_handler_)
     {
       ++telegrams_;
+      last_delivery_ = std::chrono::steady_clock::now();
       status_handler_->OnTelegramReceived();
     }
     // Like the SDK, the cancel only progresses on a live link.
@@ -315,6 +340,11 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   {
     cancel_cycles_ = number;
   }
+  else if (key == "stall_receive")
+  {
+    stall_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(number);
+    RCLCPP_INFO(logger_, "mxA status fake: receive stalled for %d ms", number);
+  }
   else if (key == "drives_stuck")
   {
     drives_stuck_ = flag;
@@ -403,6 +433,7 @@ void MxaStatusFake::Dispatch()
   }
   delivered_ = status_;
   ++telegrams_;
+  last_delivery_ = std::chrono::steady_clock::now();
   status_handler_->OnTelegramReceived();
   status_handler_->OnStatusUpdateReceived(delivered_);
 }
