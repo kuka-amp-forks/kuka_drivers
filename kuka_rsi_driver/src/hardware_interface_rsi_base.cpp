@@ -367,6 +367,19 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
   return return_type::OK;
 }
 
+// Our own stop and start raise these events too, so only a running component latches them.
+void KukaRSIHardwareInterfaceBase::OnControlEvent(
+  kuka_drivers_core::StopReason reason, const std::string & detail)
+{
+  if (!runtime_state_.is_active.load(std::memory_order_relaxed) || !LatchStopReason(reason))
+  {
+    return;
+  }
+  set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+  RCLCPP_ERROR(
+    logger_, "Stopping: %s: %s", kuka_drivers_core::StopReasonName(reason), detail.c_str());
+}
+
 bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
 {
   auto expected = kuka_drivers_core::StopReason::NONE;
@@ -815,8 +828,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   }
 
   runtime_state_.msg_received = false;
-  runtime_state_.is_active.store(true, std::memory_order_relaxed);
   ResetStopReason();
+  runtime_state_.is_active.store(true, std::memory_order_relaxed);
 
   RCLCPP_INFO(
     logger_, "Received position data from robot controller %.0f ms after the start request",
@@ -830,6 +843,9 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_lifecycle::State &)
 {
   using kuka::external::control::ReturnCode;
+
+  // Before the stop packet, so the stop event it causes is not latched as a fault.
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
 
   const uint64_t entry_ipoc = diagnostics_state_.last_ipoc;
   bool stop_sent = false;
@@ -861,7 +877,6 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
     }
   }
   const auto stop_time = std::chrono::steady_clock::now();
-  runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
 
   RequestStop();

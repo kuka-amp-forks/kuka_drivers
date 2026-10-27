@@ -89,8 +89,10 @@ The hardware interfaces export `state/stop_reason` (prefixed like `state/server_
 | `6` | motion not possible (`mxa_rsi`) |
 | `7` | the KRC left EXT (`mxa_rsi`) |
 | `8` | no mxA telegram within `mxa_status_timeout_ms` (`mxa_rsi`) |
+| `9` | the SDK reported external control stopped, for example the RSI program stopped on the controller (`eki_rsi`) |
+| `10` | the SDK reported an error, for example `STOPMESS active` (`eki_rsi`, `mxa_rsi`) |
 
-The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause. The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, a reconfigure after an mxA loss leaves it reading `8`, and a successful activation resets it to `0`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
+The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause. The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, a reconfigure after an mxA loss leaves it reading `8`, and a successful activation resets it to `0`. The SDK's stop and error events stop the component the same way while it is active, with the SDK's text in the log. They set nothing while it is inactive, since the component's own deactivation and activation raise them too. The SDK's mxA receive-timeout error comes 100 ms after the last telegram, by which time `mxa_status_timeout_ms` has already errored the component with `8`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
 
 ### I/O configuration
 

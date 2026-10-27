@@ -32,7 +32,9 @@ enum class StopReason : std::uint8_t
   DRIVES_NOT_POWERED = 5,
   MOTION_NOT_POSSIBLE = 6,
   NOT_IN_EXT = 7,
-  MXA_CONNECTION_LOST = 8
+  MXA_CONNECTION_LOST = 8,
+  CONTROL_STOPPED = 9,
+  CONTROL_ERROR = 10
 };
 
 inline const char * StopReasonName(StopReason reason)
@@ -57,6 +59,10 @@ inline const char * StopReasonName(StopReason reason)
       return "KRC not in EXT";
     case StopReason::MXA_CONNECTION_LOST:
       return "mxA connection lost";
+    case StopReason::CONTROL_STOPPED:
+      return "external control stopped";
+    case StopReason::CONTROL_ERROR:
+      return "external control error";
   }
   return "unknown";
 }
