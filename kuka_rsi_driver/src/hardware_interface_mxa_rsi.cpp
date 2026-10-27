@@ -163,11 +163,24 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::Sta
   return KukaRSIHardwareInterfaceBase::on_error(state);
 }
 
+std::chrono::milliseconds KukaMxaRsiHardwareInterface::MxaSilence() const
+{
+  const auto age = [this]
+  {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+      control_state_.status_manager.TelegramAge());
+  };
+  if (age() <= mxa_status_timeout_ || robot_ptr_->IsStatusTelegramPending())
+  {
+    return std::chrono::milliseconds{0};
+  }
+  return age();
+}
+
 return_type KukaMxaRsiHardwareInterface::read(
   const rclcpp::Time & time, const rclcpp::Duration & duration)
 {
-  const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
-    control_state_.status_manager.TelegramAge());
+  const auto age = MxaSilence();
   if (age > mxa_status_timeout_)
   {
     if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
