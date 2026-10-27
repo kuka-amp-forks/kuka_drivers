@@ -39,6 +39,7 @@ MxaStatusFake::MxaStatusFake(
   delivered_.Reset();
 }
 
+// As in the SDK, a link that is down at release times out 100 ms after its last telegram.
 MxaStatusFake::~MxaStatusFake()
 {
   running_ = false;
@@ -49,6 +50,11 @@ MxaStatusFake::~MxaStatusFake()
   if (fd_ >= 0)
   {
     close(fd_);
+  }
+  if (link_down_ && connected_ && event_handler_)
+  {
+    std::this_thread::sleep_until(last_telegram_ + kSdkReceiveTimeout);
+    event_handler_->OnError("Keep-alive thread: UDP subscriber receive timed out");
   }
 }
 
@@ -215,7 +221,7 @@ void MxaStatusFake::Serve()
     std::lock_guard<std::mutex> lk{mtx_};
     if (!link_down_ && status_handler_)
     {
-      ++telegrams_;
+      Delivered();
       status_handler_->OnTelegramReceived();
     }
     // Like the SDK, the cancel only progresses on a live link.
@@ -402,9 +408,17 @@ void MxaStatusFake::Dispatch()
     return;
   }
   delivered_ = status_;
-  ++telegrams_;
+  Delivered();
   status_handler_->OnTelegramReceived();
   status_handler_->OnStatusUpdateReceived(delivered_);
+}
+
+// Caller holds mtx_.
+void MxaStatusFake::Delivered()
+{
+  ++telegrams_;
+  connected_ = true;
+  last_telegram_ = std::chrono::steady_clock::now();
 }
 
 }  // namespace kuka_rsi_driver

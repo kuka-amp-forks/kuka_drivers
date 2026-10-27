@@ -37,10 +37,13 @@ namespace kuka_rsi_driver
 // Test stand-in for kss::mxa::Robot. Keeps the plain RSI stream and replaces the mxA link
 // with a loopback UDP socket that tests write status updates to, one text datagram each:
 //   "<field>=<int> ..."  fields of kss::StatusUpdate, e.g. "emergency_stop=1 operation_mode=4"
-//   "freeze_status" / "unfreeze_status"   withhold or restart status delivery; telegrams keep arriving
-//   "link_down" / "link_up"  stop or restart the telegram stream itself
+//   "freeze_status" / "unfreeze_status"  withhold or restart status delivery; telegrams keep
+//                        arriving
+//   "link_down" / "link_up"  stop or restart the telegram stream itself; released with the
+//                        link down, the fake raises the SDK's receive-timeout OnError
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
-//   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while status is frozen
+//   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while
+//                        status is frozen
 //   "drives_stuck=<0|1>"  while set, drives-on and drives-off requests leave drives_powered as is
 //   "send_fail=<0|1>"    while set, SendControlSignal fails without sending
 //   "report"             log rsi_running, cancel_pending, cancelled and drives_powered
@@ -79,6 +82,10 @@ private:
   bool ApplyToken(const std::string & token);
   void SetDrivesPowered(bool powered);
   void Dispatch();
+  void Delivered();
+
+  // kss::mxa::Client::kUDPTimeoutMs.
+  static constexpr std::chrono::milliseconds kSdkReceiveTimeout{100};
 
   const uint16_t port_;
   const rclcpp::Logger logger_;
@@ -93,6 +100,8 @@ private:
   StatusUpdate delivered_;
   bool status_frozen_ = false;
   bool link_down_ = false;
+  bool connected_ = false;
+  std::chrono::steady_clock::time_point last_telegram_{};
   bool drives_stuck_ = false;
   uint64_t telegrams_ = 0;
   int cancel_cycles_ = 12;

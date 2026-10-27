@@ -63,6 +63,8 @@ STOP_REASON_DRIVES_NOT_POWERED = 5.0
 STOP_REASON_MOTION_NOT_POSSIBLE = 6.0
 STOP_REASON_NOT_IN_EXT = 7.0
 STOP_REASON_MXA_CONNECTION_LOST = 8.0
+STOP_REASON_CONTROL_STOPPED = 9.0
+STOP_REASON_CONTROL_ERROR = 10.0
 
 SIMULATOR_NODE = "/kuka_rsi_simulator"
 SIMULATOR_STATE_TOPIC = "/rsi_simulator_node/rsi/state"
@@ -89,6 +91,15 @@ MXA_LOSS_LINE = re.compile(
     r"Stopping: no mxA telegram within (\d+) ms, the newest is (\d+) ms old"
 )
 MXA_RELEASED_LINE = "Releasing the mxA client, stop_reason reads 'mxA connection lost'"
+# An SDK stop or error event latched while active.
+CONTROL_EVENT_STOP_LINE = re.compile(
+    r"Stopping: (external control stopped|external control error): (\S+)"
+)
+# What the event observer logs for any SDK error event, latched or not.
+SDK_ERROR_LINE = re.compile(r"External control stopped due to an error: ([^\n]+)")
+SDK_RECEIVE_TIMEOUT_TEXT = "Keep-alive thread: UDP subscriber receive timed out"
+# What on_deactivate logs once its requests are out, with or without a stop packet.
+DEACTIVATION_REQUESTS_LINE = "Deactivation requests issued"
 JTC_DEACTIVATED_LINE = (
     f"Deactivating controllers [{JTC} ] as their command interfaces are tied to "
     "DEACTIVATEing hardware components"
@@ -330,6 +341,8 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
 __all__ = [
     "ANY_STATE_STOP_LINE",
     "COMPONENT",
+    "CONTROL_EVENT_STOP_LINE",
+    "DEACTIVATION_REQUESTS_LINE",
     "EVENT_BROADCASTER",
     "HARDWARE_EVENT_ERROR",
     "JSB",
@@ -340,11 +353,15 @@ __all__ = [
     "NO_STOP_PACKET_LINE",
     "OP_MODE_EXT",
     "RECEIVE_FAILURE_LINE",
+    "SDK_ERROR_LINE",
+    "SDK_RECEIVE_TIMEOUT_TEXT",
     "SEND_FAILURE_LINE",
     "SIMULATOR_READ_TIMEOUT_MS",
     "SIMULATOR_SILENCE_PACKETS",
     "STATUS_STOP_LINE",
     "STOP_REASON_BROADCASTER",
+    "STOP_REASON_CONTROL_ERROR",
+    "STOP_REASON_CONTROL_STOPPED",
     "STOP_REASON_DRIVES_NOT_POWERED",
     "STOP_REASON_EMERGENCY_STOP",
     "STOP_REASON_GUARD_STOP",
