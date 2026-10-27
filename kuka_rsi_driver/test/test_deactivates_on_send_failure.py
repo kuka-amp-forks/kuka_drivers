@@ -25,6 +25,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mxa_status_fake_support import DEACTIVATION_LINE  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
+    HARDWARE_EVENT_ERROR,
     SEND_FAILURE_LINE,
     STOP_REASON_RSI_SEND_FAILED,
     LogCursor,
@@ -45,10 +46,17 @@ class TestDeactivatesOnSendFailure(RsiFaultTestCase):
         self.start_streaming(log)
 
         log = LogCursor(proc_output)
+        self.hardware_events.clear()
         self.inject("send_fail=1")
         match = log.wait_for_match(SEND_FAILURE_LINE, timeout=5)
         self.assertIsNotNone(match, "no stop line in the driver log")
         failed_ipoc = int(match.group(1))
+        # A send failure reaches the event broadcaster the same as a missed packet, so
+        # robot_manager hears about it even though write() never throws.
+        self.assertTrue(
+            self._spin_until(lambda: HARDWARE_EVENT_ERROR in self.hardware_events, timeout=5),
+            f"no error event on the event broadcaster, saw {self.hardware_events}",
+        )
         self.assert_stopped(log, STOP_REASON_RSI_SEND_FAILED)
         self.assertFalse(log.wait_for("Quitting control loop", timeout=0.1), "control loop died")
 

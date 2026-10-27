@@ -357,6 +357,9 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
         logger_, "Stopping: sending the RSI command for IPOC %lu failed",
         diagnostics_state_.last_ipoc);
     }
+    // read() still runs while INACTIVE, so this reaches the event broadcaster same as a receive
+    // failure, and robot_manager gets told to deactivate JTC/JSB.
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
     UpdateStopReasonState();
     return return_type::DEACTIVATE;
   }
