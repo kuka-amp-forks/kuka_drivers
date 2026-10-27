@@ -56,7 +56,11 @@ def generate_test_description():
 
 class TestReceiveStallDoesNotError(RsiFaultTestCase):
     def prepare_inactive(self):
-        """INACTIVE with read() running and the broadcasters the spawners started still active."""
+        """INACTIVE with read() running and the broadcasters active, also after an mxA loss."""
+        if self.component_state() == State.PRIMARY_STATE_UNCONFIGURED:
+            self.inject("link_up")
+            self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
+            self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
         for name in (JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER):
             self._wait_for_controller_active(name, timeout=30)
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
