@@ -579,17 +579,22 @@ class RSISimulator(Node):
 def main():
     rclpy.init()
     node = RSISimulator("rsi_simulator_node")
+
+    # The handler runs inside the executor, so it only unwinds spin; shutdown happens after it.
+    def _sigint_handler(signum, frame):
+        node.get_logger().info("SIGINT received, shutting down")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _sigint_handler)
     node.get_logger().info("Started")
 
-    def _sigterm_handler(signum, frame):
-        node.get_logger().info("SIGINT received, shutting down")
-        rclpy.shutdown()
-
-    signal.signal(signal.SIGINT, _sigterm_handler)
-
-    rclpy.spin(node)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     node.on_shutdown()
     node.get_logger().info("Shutting down")
+    rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
