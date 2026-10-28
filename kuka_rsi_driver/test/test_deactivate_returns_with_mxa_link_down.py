@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A stop pending on a frozen status stream waits; losing the link while INACTIVE errors instead."""
+"""A stop pending on a frozen status stream waits; a link loss while INACTIVE errors instead."""
 
 import os
 import sys

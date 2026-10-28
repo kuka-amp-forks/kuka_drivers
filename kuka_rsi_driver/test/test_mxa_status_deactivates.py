@@ -56,7 +56,7 @@ class TestMxaStatusDeactivates(RsiFaultTestCase):
         match = log.wait_for_match(STATUS_STOP_LINE, timeout=5)
         self.assertIsNotNone(match, "no stop line in the driver log")
         self.assertEqual(match.group(1), name)
-        self.assertIn(datagram, match.group(2), "raw status not logged with the cause")
+        self.assertTrue(datagram in match.group(2), "raw status not logged with the cause")
         self.assert_stopped(log, reason)
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.assertEqual(log.matches(RECEIVE_FAILURE_LINE), [], "RSI blamed for a status stop")
