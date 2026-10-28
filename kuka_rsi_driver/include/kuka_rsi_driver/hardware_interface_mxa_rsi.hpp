@@ -83,6 +83,9 @@ private:
   // Latches the first mxA status that forbids motion; true when this call latched it.
   KUKA_RSI_DRIVER_LOCAL bool LatchStatusStop();
 
+  // The newest mxA telegram's age once past the bound with none still queued, otherwise zero.
+  KUKA_RSI_DRIVER_LOCAL std::chrono::milliseconds MxaSilence() const;
+
   // Bound on the age of the newest mxA telegram, below the SDK's own 100 ms receive timeout.
   static constexpr std::chrono::milliseconds DEFAULT_MXA_STATUS_TIMEOUT{60};
   // Mirrors kuka::external::control::kss::mxa::Client::kUDPTimeoutMs (client.h); keep in sync.
