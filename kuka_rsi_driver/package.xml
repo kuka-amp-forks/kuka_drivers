@@ -40,6 +40,8 @@
   <test_depend>action_msgs</test_depend>
   <test_depend>builtin_interfaces</test_depend>
   <test_depend>control_msgs</test_depend>
+  <test_depend>gpio_controllers</test_depend>
+  <test_depend>rcl_interfaces</test_depend>
   <test_depend>trajectory_msgs</test_depend>
   <test_depend>robot_state_publisher</test_depend>
   <test_depend>launch_ros</test_depend>

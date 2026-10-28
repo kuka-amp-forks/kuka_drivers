@@ -44,11 +44,6 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_init(
   RCLCPP_INFO(
     logger_, "Robot model verification: %s", verify_robot_model_ ? "enabled" : "disabled");
 
-  if (!ReadTimeoutParameters())
-  {
-    return CallbackReturn::ERROR;
-  }
-
   return CallbackReturn::SUCCESS;
 }
 

@@ -111,6 +111,16 @@ MxaStatusFake::Status MxaStatusFake::StopControlling()
   return result;
 }
 
+// Like a failed sendto, leaves the SDK's request pending so the stop packet still has a target.
+MxaStatusFake::Status MxaStatusFake::SendControlSignal()
+{
+  if (send_fail_)
+  {
+    return {ReturnCode::ERROR, "mxA status fake: send failure injected"};
+  }
+  return kuka::external::control::kss::rsi::Robot::SendControlSignal();
+}
+
 // Blocking form, like the SDK: no bound, so it never returns while stalled.
 MxaStatusFake::Status MxaStatusFake::CancelRsiProgram()
 {
@@ -305,6 +315,10 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   else if (key == "drives_stuck")
   {
     drives_stuck_ = flag;
+  }
+  else if (key == "send_fail")
+  {
+    send_fail_ = flag;
   }
   else if (key == "control_mode")
   {

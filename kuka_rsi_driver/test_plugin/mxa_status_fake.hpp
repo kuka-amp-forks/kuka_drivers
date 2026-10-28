@@ -42,6 +42,7 @@ namespace kuka_rsi_driver
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
 //   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while stalled
 //   "drives_stuck=<0|1>"  while set, drives-on and drives-off requests leave drives_powered as is
+//   "send_fail=<0|1>"    while set, SendControlSignal fails without sending
 //   "report"             log rsi_running, cancel_pending, cancelled and drives_powered
 // Built only for tests, behind KukaMxaRsiStatusFakeHardwareInterface.
 class MxaStatusFake : public kuka::external::control::kss::rsi::Robot
@@ -58,6 +59,7 @@ public:
   Status Setup() override;
   Status StartControlling(kuka::external::control::ControlMode) override;
   Status StopControlling() override;
+  Status SendControlSignal() override;
   Status CancelRsiProgram() override;
   Status RequestRsiProgramCancel() override;
   bool IsRsiProgramCancelled() const override;
@@ -83,6 +85,7 @@ private:
   int fd_ = -1;
   std::thread thread_;
   std::atomic<bool> running_{false};
+  std::atomic<bool> send_fail_{false};
   bool rsi_running_ = false;
 
   mutable std::mutex mtx_;

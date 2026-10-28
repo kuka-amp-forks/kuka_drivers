@@ -34,6 +34,7 @@ from std_msgs.msg import Bool
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from joint_move_test_case import JointMoveTestCase  # noqa: E402
+from rsi_only_support import SIMULATOR_READ_TIMEOUT_MS, hardware_params  # noqa: E402
 
 COMPONENT = "kr6_r700_2"
 FAKE_PORT = 59153
@@ -63,12 +64,7 @@ FAKE_REPORT_LINE = re.compile(
 )
 
 
-def hardware_params(**values):
-    """Render extra <param> elements for the <hardware> block, e.g. first_packet_timeout_ms."""
-    return "".join(f'<param name="{name}">{value}</param>' for name, value in values.items())
-
-
-def robot_description(extra_params=""):
+def robot_description(extra_params="", read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS):
     """Build the mxa_rsi description with the test-only plugin in place of the shipped one."""
     urdf = xacro.process_file(
         os.path.join(
@@ -84,11 +80,18 @@ def robot_description(extra_params=""):
         },
     ).toxml()
     assert PRODUCTION_PLUGIN in urdf
-    return urdf.replace(PRODUCTION_PLUGIN, FAKE_PLUGIN + extra_params)
+    return urdf.replace(
+        PRODUCTION_PLUGIN,
+        FAKE_PLUGIN + hardware_params(read_timeout_ms=read_timeout_ms) + extra_params,
+    )
 
 
 def fake_launch_description(
-    update_rate=250, extra_params="", simulator=True, respawn_simulator=False
+    update_rate=250,
+    extra_params="",
+    simulator=True,
+    respawn_simulator=False,
+    read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS,
 ):
     """
     control_node on the fake, starting inactive, with robot_state_publisher.
@@ -96,7 +99,7 @@ def fake_launch_description(
     The RSI simulator exits on the stop flag of a deactivation; a test that activates again
     afterwards needs it respawned. Without the simulator no RSI packet ever arrives.
     """
-    description = {"robot_description": robot_description(extra_params)}
+    description = {"robot_description": robot_description(extra_params, read_timeout_ms)}
 
     control_node = launch_ros.actions.Node(
         package="kuka_drivers_core",
@@ -169,6 +172,10 @@ class LogCursor:
             if time.monotonic() > end:
                 return None
             time.sleep(0.05)
+
+    def matches(self, pattern):
+        """Return every match of a compiled regex in the new output so far."""
+        return list(pattern.finditer(self._new_text()))
 
 
 class MxaStatusFakeTestCase(JointMoveTestCase):
@@ -288,6 +295,7 @@ __all__ = [
     "OP_MODE_EXT",
     "OP_MODE_T1",
     "RECEIVED_FIRST_PACKET",
+    "SIMULATOR_READ_TIMEOUT_MS",
     "STOP_COMPLETE_DRIVES_ON_LINE",
     "STOP_COMPLETE_LINE",
     "STOP_PENDING_FAILURE",
