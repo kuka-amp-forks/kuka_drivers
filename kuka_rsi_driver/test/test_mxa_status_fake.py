@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Injected mxA status gates activation of the mxA component, and a frozen status stream withholds it."""
+"""Injected mxA status gates mxA component activation, and a frozen status stream withholds it."""
 
 import os
 import sys

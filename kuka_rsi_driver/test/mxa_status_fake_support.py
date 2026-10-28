@@ -258,8 +258,12 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         self.assertTrue(log.wait_for("Started", timeout=timeout), "simulator did not respawn")
 
     def wait_for_simulator_respawn_if_any(self, log, timeout=3):
-        """Like wait_for_simulator_respawn, but a deactivate with no RSI packet in flight never
-        sends a stop flag, so the simulator does not always restart; do not fail if it doesn't."""
+        """
+        Like wait_for_simulator_respawn, but do not fail if the simulator does not restart.
+
+        A deactivate with no RSI packet in flight never sends a stop flag, so the simulator
+        does not always restart.
+        """
         log.wait_for("Started", timeout=timeout)
 
     def activate_and_stream(self, log, seconds=1.0):
