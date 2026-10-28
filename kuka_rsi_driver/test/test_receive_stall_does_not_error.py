@@ -66,19 +66,17 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         self.publish_is_configured()
 
-    def stall_receive(self, log):
-        """Hold the fake's receive thread past the bound, again and again."""
+    def assert_still(self, log, state):
+        """No loss line, and no error either: a held stop_reason of 8 logs no second line."""
+        self.assertEqual(log.matches(MXA_LOSS_LINE), [], "a local stall read as an mxA loss")
+        self.assertEqual(self.component_state(), state, "a local stall errored the component")
+
+    def stall_receive(self, log, state):
+        """Hold the fake's receive thread past the bound, STALLS times."""
         for _ in range(STALLS):
             self.inject(f"stall_receive={STALL_MS}")
-        self.assertTrue(
-            self._spin_until(lambda: len(log.matches(RECEIVE_RESUMED_LINE)) == STALLS, timeout=5),
-            "the receive thread did not resume",
-        )
-
-    def assert_no_loss(self, log, state, stop_reason):
-        self.assertEqual(log.matches(MXA_LOSS_LINE), [], "a local stall read as an mxA loss")
-        self.assertEqual(self.component_state(), state)
-        self.assertEqual(self.stop_reason(), stop_reason)
+            self.assert_still(log, state)
+        self.assertEqual(len(log.matches(RECEIVE_RESUMED_LINE)), STALLS)
 
     def test_process_stop_while_inactive(self, proc_output, proc_info):
         self.prepare_inactive()
@@ -92,7 +90,8 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
             time.sleep(STALL_MS / 1000)
             os.kill(pid, signal.SIGCONT)
             self._spin_for(0.2)
-        self.assert_no_loss(log, State.PRIMARY_STATE_INACTIVE, held)
+            self.assert_still(log, State.PRIMARY_STATE_INACTIVE)
+        self.assertEqual(self.stop_reason(), held)
 
     def test_receive_stall_while_active(self, proc_output):
         log = LogCursor(proc_output)
@@ -100,8 +99,8 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
         self.start_streaming(log)
 
         log = LogCursor(proc_output)
-        self.stall_receive(log)
-        self.assert_no_loss(log, State.PRIMARY_STATE_ACTIVE, STOP_REASON_NONE)
+        self.stall_receive(log, State.PRIMARY_STATE_ACTIVE)
+        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
         self.assertEqual(self.controller_state(JTC), "active")
 
         log = LogCursor(proc_output)
@@ -115,8 +114,8 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
         held = self.stop_reason()
 
         log = LogCursor(proc_output)
-        self.stall_receive(log)
-        self.assert_no_loss(log, State.PRIMARY_STATE_INACTIVE, held)
+        self.stall_receive(log, State.PRIMARY_STATE_INACTIVE)
+        self.assertEqual(self.stop_reason(), held)
 
         # A silent link after the stalls still errors within the bound.
         self.inject("link_down")
