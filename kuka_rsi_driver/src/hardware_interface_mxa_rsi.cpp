@@ -266,18 +266,27 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
 {
   using kuka_drivers_core::StopReason;
 
+  // Only a rising edge is a new event; the flag stays set for as long as its cause is held.
+  const bool emergency_stop_raised = update.emergency_stop_ && !last_emergency_stop_;
+  const bool guard_stop_raised = update.guard_stop_ && !last_guard_stop_;
+  last_emergency_stop_ = update.emergency_stop_;
+  last_guard_stop_ = update.guard_stop_;
+
   if (runtime_state_.is_active.load(std::memory_order_relaxed))
   {
     return;
   }
 
   StopReason reason = StopReason::NONE;
-  if (update.emergency_stop_)
+  if (emergency_stop_raised)
   {
     reason = StopReason::EMERGENCY_STOP;
   }
-  else if (update.guard_stop_)
+  else if (guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed))
   {
+    // A KRC that disables the drives through safety (r930: "Drives disabled by Safety.") raises
+    // this on the driver's own cancel and drives-off too; while that stop is pending it is the
+    // stop's doing, not a fault, and must not survive a clean deactivate as stop_reason 4.
     reason = StopReason::GUARD_STOP;
   }
 
