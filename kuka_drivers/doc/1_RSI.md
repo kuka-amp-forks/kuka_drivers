@@ -89,8 +89,14 @@ The hardware interfaces export `state/stop_reason` (prefixed like `state/server_
 | `6` | motion not possible (`mxa_rsi`) |
 | `7` | the KRC left EXT (`mxa_rsi`) |
 | `8` | no mxA telegram within `mxa_status_timeout_ms` (`mxa_rsi`) |
+| `9` | the SDK reported external control stopped, for example the RSI program stopped on the controller (`eki_rsi`) |
+| `10` | the SDK reported an error, for example `STOPMESS active` (`eki_rsi`, `mxa_rsi`) |
 
-The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause. The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, a reconfigure after an mxA loss leaves it reading `8`, and a successful activation resets it to `0`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
+The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause. The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, a reconfigure after an mxA loss leaves it reading `8`, and a successful activation resets it to `0`. The SDK's stop and error events stop the component the same way while it is active, with the SDK's text in the log. They set nothing while it is inactive, since the component's own deactivation and activation raise them too. The SDK's mxA receive-timeout error comes 100 ms after the last telegram, by which time `mxa_status_timeout_ms` has already errored the component with `8`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
+
+### Command mode
+
+Joint position is the only command mode. A controller switch that claims a joint `velocity` or `effort` command interface is refused in `prepare_command_mode_switch`: the switch fails, the driver logs the refused interface, and the active controllers keep running. GPIO command interfaces are not a mode and can be claimed.
 
 ### I/O configuration
 
@@ -272,7 +278,7 @@ Upload the generated file to the controller as described in [Update and upload c
 > Automatic detection of the number of internal and external axes relies on the default RSI position element names (`AIPos` for internal axes and `EIPos` for external axes). If custom position element names are used, axis types can no longer be inferred reliably from the RSI XML configuration. In such cases, the configuration for all internal and external axes must be specified explicitly, or the default naming convention should be preserved.
 
 > [!NOTE]
-> If torque or velocity command/state interfaces are not configured in the provided YAML file, they will still be exported to ROS 2 Control. However, their state values will remain at the default value (NaN) and will not be updated with measurements from the robot. Likewise, commands written to these interfaces will not be forwarded to the robot.
+> If torque or velocity command/state interfaces are not configured in the provided YAML file, they will still be exported to ROS 2 Control. However, their state values will remain at the default value (NaN) and will not be updated with measurements from the robot. Velocity and effort command interfaces cannot be claimed (see [Command mode](#command-mode)), so their values go out as `0` even when the YAML file forwards them.
 
 > [!NOTE]
 > A configuration is considered custom whenever it does not use the default RSI names, or when it includes values beyond joint positions (`AIPos`) and cartesian positions (`RIst`). In these cases, the corresponding RSI context must be created and maintained by the user. We cannot provide a prebuilt RSI context for every possible custom use case.

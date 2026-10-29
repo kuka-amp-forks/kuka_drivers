@@ -386,6 +386,41 @@ int StopReasonSeverity(kuka_drivers_core::StopReason reason)
 }
 }  // namespace
 
+// Our own stop and start raise these events too, so only a running component latches them.
+void KukaRSIHardwareInterfaceBase::OnControlEvent(
+  kuka_drivers_core::StopReason reason, const std::string & detail)
+{
+  if (!runtime_state_.is_active.load(std::memory_order_relaxed) || !LatchStopReason(reason))
+  {
+    return;
+  }
+  set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+  RCLCPP_ERROR(
+    logger_, "Stopping: %s: %s", kuka_drivers_core::StopReasonName(reason), detail.c_str());
+}
+
+return_type KukaRSIHardwareInterfaceBase::prepare_command_mode_switch(
+  const std::vector<std::string> & start_interfaces, const std::vector<std::string> &)
+{
+  // GPIO commands are not a mode, so only the joint interfaces are checked.
+  for (const auto & joint : info_.joints)
+  {
+    const std::string prefix = joint.name + "/";
+    for (const auto & name : start_interfaces)
+    {
+      if (name.rfind(prefix, 0) == 0 && name != prefix + hardware_interface::HW_IF_POSITION)
+      {
+        RCLCPP_ERROR(
+          logger_,
+          "Refusing the command mode switch: '%s' requested, only joint position is supported",
+          name.c_str());
+        return return_type::ERROR;
+      }
+    }
+  }
+  return return_type::OK;
+}
+
 bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
 {
   auto current = event_state_.stop_reason.load();
@@ -847,8 +882,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   }
 
   runtime_state_.msg_received = false;
-  runtime_state_.is_active.store(true, std::memory_order_relaxed);
   ResetStopReason();
+  runtime_state_.is_active.store(true, std::memory_order_relaxed);
 
   RCLCPP_INFO(
     logger_, "Received position data from robot controller %.0f ms after the start request",
@@ -862,6 +897,9 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_lifecycle::State &)
 {
   using kuka::external::control::ReturnCode;
+
+  // Before the stop packet, so the stop event it causes is not latched as a fault.
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
 
   const uint64_t entry_ipoc = diagnostics_state_.last_ipoc;
   bool stop_sent = false;
@@ -893,7 +931,6 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
     }
   }
   const auto stop_time = std::chrono::steady_clock::now();
-  runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
 
   RequestStop();

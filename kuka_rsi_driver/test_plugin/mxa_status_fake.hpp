@@ -39,7 +39,8 @@ namespace kuka_rsi_driver
 // Like the KRC, the modelled sender keeps a 10 ms telegram clock whether or not this process runs.
 //   "<field>=<int> ..."  fields of kss::StatusUpdate, e.g. "emergency_stop=1 operation_mode=4"
 //   "freeze_status" / "unfreeze_status"  withhold or restart status delivery, not the telegrams
-//   "link_down" / "link_up"  stop or restart the telegram stream itself
+//   "link_down" / "link_up"  stop or restart the telegram stream itself; released with the
+//                        link down, the fake raises the SDK's receive-timeout OnError
 //   "stall_receive=<ms>"  hold the receive thread for <ms> while telegrams keep arriving
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
 //   "cancel_cycles=<int>" ticks (10 ms) a requested RSI cancel takes; held while status is frozen
@@ -82,6 +83,10 @@ private:
   bool ApplyToken(const std::string & token);
   void SetDrivesPowered(bool powered);
   void Dispatch();
+  void Delivered();
+
+  // kss::mxa::Client::kUDPTimeoutMs.
+  static constexpr std::chrono::milliseconds kSdkReceiveTimeout{100};
 
   const uint16_t port_;
   const rclcpp::Logger logger_;
@@ -96,6 +101,7 @@ private:
   StatusUpdate delivered_;
   bool status_frozen_ = false;
   bool link_down_ = false;
+  bool connected_ = false;
   bool drives_stuck_ = false;
   uint64_t telegrams_ = 0;
   std::chrono::steady_clock::time_point last_delivery_{};
