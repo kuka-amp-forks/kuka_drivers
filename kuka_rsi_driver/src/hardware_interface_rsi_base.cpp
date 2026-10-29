@@ -367,10 +367,43 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
   return return_type::OK;
 }
 
+namespace
+{
+// Severity of a cause, highest first: emergency stop, guard stop, then every other cause alike.
+// A more severe cause replaces a latched one; between equals the first wins.
+int StopReasonSeverity(kuka_drivers_core::StopReason reason)
+{
+  switch (reason)
+  {
+    case kuka_drivers_core::StopReason::NONE:
+      return 0;
+    case kuka_drivers_core::StopReason::EMERGENCY_STOP:
+      return 3;
+    case kuka_drivers_core::StopReason::GUARD_STOP:
+      return 2;
+    default:
+      return 1;
+  }
+}
+}  // namespace
+
 bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
 {
-  auto expected = kuka_drivers_core::StopReason::NONE;
-  return event_state_.stop_reason.compare_exchange_strong(expected, reason);
+  auto current = event_state_.stop_reason.load();
+  while (StopReasonSeverity(reason) > StopReasonSeverity(current))
+  {
+    if (event_state_.stop_reason.compare_exchange_weak(current, reason))
+    {
+      if (current != kuka_drivers_core::StopReason::NONE)
+      {
+        RCLCPP_WARN(
+          logger_, "stop_reason '%s' replaced by the more severe '%s'",
+          kuka_drivers_core::StopReasonName(current), kuka_drivers_core::StopReasonName(reason));
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 void KukaRSIHardwareInterfaceBase::ResetStopReason()
@@ -894,6 +927,13 @@ void KukaRSIHardwareInterfaceBase::RequestStop()
   using kuka::external::control::ReturnCode;
 
   runtime_state_.cancel_confirmed = false;
+  runtime_state_.stop_pending_reads = 0;
+  runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
+  runtime_state_.stop_timeout_reported = false;
+  // Before the requests go out: the KRC answers them with a drives-off that some cells report as
+  // a guard stop, and the status thread must already know that stop is commanded.
+  runtime_state_.stop_pending = true;
+
   const auto cancel_status = robot_ptr_->RequestRsiProgramCancel();
   if (cancel_status.return_code == ReturnCode::UNSUPPORTED)
   {
@@ -911,10 +951,6 @@ void KukaRSIHardwareInterfaceBase::RequestStop()
     RCLCPP_INFO(logger_, "Turning off drives");
     robot_ptr_->TurnOffDrives();
   }
-  runtime_state_.stop_pending = true;
-  runtime_state_.stop_pending_reads = 0;
-  runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
-  runtime_state_.stop_timeout_reported = false;
 }
 
 void KukaRSIHardwareInterfaceBase::CheckStopComplete()
