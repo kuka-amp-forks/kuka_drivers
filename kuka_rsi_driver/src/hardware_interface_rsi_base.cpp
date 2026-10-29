@@ -284,6 +284,24 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::
   return CallbackReturn::SUCCESS;
 }
 
+// Nothing waits on a dead link; the next configure makes a new client.
+CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::State &)
+{
+  if (
+    runtime_state_.is_active.load(std::memory_order_relaxed) && runtime_state_.msg_received &&
+    robot_ptr_)
+  {
+    robot_ptr_->kuka::external::control::kss::rsi::Robot::StopControlling();
+  }
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
+  runtime_state_.msg_received = false;
+  runtime_state_.stop_pending = false;
+  runtime_state_.cancel_confirmed = false;
+  UpdateStopReasonState();
+  robot_ptr_.reset();
+  return CallbackReturn::SUCCESS;
+}
+
 return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcpp::Duration &)
 {
   {
@@ -294,7 +312,7 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
 
   // The first packet is received at activation, Read() should not be called before
   // Add short sleep to avoid RT thread eating CPU
-  if (!runtime_state_.is_active)
+  if (!runtime_state_.is_active.load(std::memory_order_relaxed))
   {
     if (runtime_state_.stop_pending)
     {
@@ -349,10 +367,42 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
   return return_type::OK;
 }
 
+namespace
+{
+// Priority of a stop cause; a more severe cause replaces a latched one.
+int StopReasonSeverity(kuka_drivers_core::StopReason reason)
+{
+  switch (reason)
+  {
+    case kuka_drivers_core::StopReason::NONE:
+      return 0;
+    case kuka_drivers_core::StopReason::EMERGENCY_STOP:
+      return 3;
+    case kuka_drivers_core::StopReason::GUARD_STOP:
+      return 2;
+    default:
+      return 1;
+  }
+}
+}  // namespace
+
 bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
 {
-  auto expected = kuka_drivers_core::StopReason::NONE;
-  return event_state_.stop_reason.compare_exchange_strong(expected, reason);
+  auto current = event_state_.stop_reason.load();
+  while (StopReasonSeverity(reason) > StopReasonSeverity(current))
+  {
+    if (event_state_.stop_reason.compare_exchange_weak(current, reason))
+    {
+      if (current != kuka_drivers_core::StopReason::NONE)
+      {
+        RCLCPP_WARN(
+          logger_, "stop_reason '%s' replaced by the more severe '%s'",
+          kuka_drivers_core::StopReasonName(current), kuka_drivers_core::StopReasonName(reason));
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 void KukaRSIHardwareInterfaceBase::ResetStopReason()
@@ -797,7 +847,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   }
 
   runtime_state_.msg_received = false;
-  runtime_state_.is_active = true;
+  runtime_state_.is_active.store(true, std::memory_order_relaxed);
   ResetStopReason();
 
   RCLCPP_INFO(
@@ -843,7 +893,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
     }
   }
   const auto stop_time = std::chrono::steady_clock::now();
-  runtime_state_.is_active = false;
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
 
   RequestStop();
@@ -876,6 +926,12 @@ void KukaRSIHardwareInterfaceBase::RequestStop()
   using kuka::external::control::ReturnCode;
 
   runtime_state_.cancel_confirmed = false;
+  runtime_state_.stop_pending_reads = 0;
+  runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
+  runtime_state_.stop_timeout_reported = false;
+  // Set before the stop request goes out so the status thread sees it in time.
+  runtime_state_.stop_pending = true;
+
   const auto cancel_status = robot_ptr_->RequestRsiProgramCancel();
   if (cancel_status.return_code == ReturnCode::UNSUPPORTED)
   {
@@ -893,10 +949,6 @@ void KukaRSIHardwareInterfaceBase::RequestStop()
     RCLCPP_INFO(logger_, "Turning off drives");
     robot_ptr_->TurnOffDrives();
   }
-  runtime_state_.stop_pending = true;
-  runtime_state_.stop_pending_reads = 0;
-  runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
-  runtime_state_.stop_timeout_reported = false;
 }
 
 void KukaRSIHardwareInterfaceBase::CheckStopComplete()

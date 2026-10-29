@@ -35,12 +35,14 @@ namespace kuka_rsi_driver
 {
 
 // Test stand-in for kss::mxa::Robot. Keeps the plain RSI stream and replaces the mxA link
-// with a loopback UDP socket that tests write status updates to, one text datagram each:
+// with a loopback UDP socket that tests write status updates to, one text datagram each.
+// Like the KRC, the modelled sender keeps a 10 ms telegram clock whether or not this process runs.
 //   "<field>=<int> ..."  fields of kss::StatusUpdate, e.g. "emergency_stop=1 operation_mode=4"
-//   "period_ms=<int>"    telegram cadence; 0 stops the cadence
-//   "stall" / "resume"   stop or restart delivery to the driver
+//   "freeze_status" / "unfreeze_status"  withhold or restart status delivery, not the telegrams
+//   "link_down" / "link_up"  stop or restart the telegram stream itself
+//   "stall_receive=<ms>"  hold the receive thread for <ms> while telegrams keep arriving
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler
-//   "cancel_cycles=<int>" serve ticks (10 ms) a requested RSI cancel takes; frozen while stalled
+//   "cancel_cycles=<int>" ticks (10 ms) a requested RSI cancel takes; held while status is frozen
 //   "drives_stuck=<0|1>"  while set, drives-on and drives-off requests leave drives_powered as is
 //   "send_fail=<0|1>"    while set, SendControlSignal fails without sending
 //   "report"             log rsi_running, cancel_pending, cancelled and drives_powered
@@ -63,6 +65,7 @@ public:
   Status CancelRsiProgram() override;
   Status RequestRsiProgramCancel() override;
   bool IsRsiProgramCancelled() const override;
+  bool IsStatusTelegramPending() const override;
   Status TurnOnDrives() override;
   Status TurnOffDrives() override;
   Status SetCycleTime(kuka::external::control::kss::CycleTime) override;
@@ -91,10 +94,12 @@ private:
   mutable std::mutex mtx_;
   StatusUpdate status_;
   StatusUpdate delivered_;
-  bool stalled_ = false;
+  bool status_frozen_ = false;
+  bool link_down_ = false;
   bool drives_stuck_ = false;
-  std::chrono::milliseconds period_{0};
   uint64_t telegrams_ = 0;
+  std::chrono::steady_clock::time_point last_delivery_{};
+  std::chrono::steady_clock::time_point stall_until_{};
   int cancel_cycles_ = 12;
   int cancel_pending_ = 0;
   bool cancelled_ = false;

@@ -112,7 +112,7 @@ def generate_test_description():
 
 
 class TestStreamsWithoutEventBroadcaster(JointMoveTestCase):
-    def test_follows_trajectory_without_event_broadcaster(self, proc_output):
+    def test_follows_trajectory_without_event_broadcaster(self, proc_output, proc_info):
         proc_output.assertWaitFor(f"Successful 'configure' of hardware '{COMPONENT}'", timeout=30)
 
         self._spin_for(3.0)
@@ -187,6 +187,8 @@ class TestStreamsWithoutEventBroadcaster(JointMoveTestCase):
             timeout=30,
         )
         self.assertTrue(result.ok, "set_hardware_component_state(inactive) refused")
+        # The stop flag ends the simulator; a SIGINT from launch during that exit makes it -2.
+        proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
 
 
 @launch_testing.post_shutdown_test()

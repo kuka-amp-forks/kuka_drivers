@@ -26,7 +26,13 @@ enum class StopReason : std::uint8_t
 {
   NONE = 0,
   RSI_RECEIVE_FAILED = 1,
-  RSI_SEND_FAILED = 2
+  RSI_SEND_FAILED = 2,
+  EMERGENCY_STOP = 3,
+  GUARD_STOP = 4,
+  DRIVES_NOT_POWERED = 5,
+  MOTION_NOT_POSSIBLE = 6,
+  NOT_IN_EXT = 7,
+  MXA_CONNECTION_LOST = 8
 };
 
 inline const char * StopReasonName(StopReason reason)
@@ -39,6 +45,18 @@ inline const char * StopReasonName(StopReason reason)
       return "RSI receive failed";
     case StopReason::RSI_SEND_FAILED:
       return "RSI send failed";
+    case StopReason::EMERGENCY_STOP:
+      return "emergency stop";
+    case StopReason::GUARD_STOP:
+      return "guard stop";
+    case StopReason::DRIVES_NOT_POWERED:
+      return "drives not powered";
+    case StopReason::MOTION_NOT_POSSIBLE:
+      return "motion not possible";
+    case StopReason::NOT_IN_EXT:
+      return "KRC not in EXT";
+    case StopReason::MXA_CONNECTION_LOST:
+      return "mxA connection lost";
   }
   return "unknown";
 }

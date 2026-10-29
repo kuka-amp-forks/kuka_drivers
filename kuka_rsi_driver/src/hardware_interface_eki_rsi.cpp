@@ -85,7 +85,7 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     eki_config.kli_ip_address.c_str(), eki_config.client_ip.c_str(), eki_config.client_port);
 
   auto status = robot_ptr_->RegisterStatusResponseHandler(
-    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager));
+    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager, this));
   if (status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Registering status response handler failed: %s", status.message);

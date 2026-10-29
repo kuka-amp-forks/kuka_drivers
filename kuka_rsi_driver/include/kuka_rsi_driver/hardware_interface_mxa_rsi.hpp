@@ -15,6 +15,7 @@
 #ifndef KUKA_RSI_DRIVER__HARDWARE_INTERFACE_MXA_RSI_HPP_
 #define KUKA_RSI_DRIVER__HARDWARE_INTERFACE_MXA_RSI_HPP_
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -60,18 +61,44 @@ public:
   KUKA_RSI_DRIVER_PUBLIC
   CallbackReturn on_deactivate(const rclcpp_lifecycle::State &) override;
 
+  KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_error(const rclcpp_lifecycle::State &) override;
+
   KUKA_RSI_DRIVER_PUBLIC
   return_type read(const rclcpp::Time &, const rclcpp::Duration &) override;
 
+  KUKA_RSI_DRIVER_PUBLIC
+  return_type write(const rclcpp::Time &, const rclcpp::Duration &) override;
+
   KUKA_RSI_DRIVER_PUBLIC void mxa_init(const InitializationData &);
 
-protected:
-  KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout) override;
+  // Latches e-stop/guard stop from the mxA thread itself, in any lifecycle state.
+  KUKA_RSI_DRIVER_PUBLIC void OnStatusUpdate(
+    const kuka::external::control::kss::StatusUpdate & update) override;
 
+protected:
   KUKA_RSI_DRIVER_LOCAL void CreateRobotInstance(
     const kuka::external::control::kss::Configuration &) override;
 
 private:
+  // Latches the first mxA status that forbids motion; true when this call latched it.
+  KUKA_RSI_DRIVER_LOCAL bool LatchStatusStop();
+
+  // The newest mxA telegram's age once past the bound with none still queued, otherwise zero.
+  KUKA_RSI_DRIVER_LOCAL std::chrono::milliseconds MxaSilence() const;
+
+  // Bound on the age of the newest mxA telegram, below the SDK's own 100 ms receive timeout.
+  static constexpr std::chrono::milliseconds DEFAULT_MXA_STATUS_TIMEOUT{60};
+  // Mirrors kuka::external::control::kss::mxa::Client::kUDPTimeoutMs (client.h); keep in sync.
+  static constexpr std::chrono::milliseconds SDK_MXA_RECEIVE_TIMEOUT{100};
+  std::chrono::milliseconds mxa_status_timeout_{DEFAULT_MXA_STATUS_TIMEOUT};
+  // Set once read() has exported an mxA loss as server_state; the next write() or read() errors.
+  bool mxa_loss_exported_ = false;
+  // E-stop and guard stop of the last telegram, mxA thread only. Telegrams come only on a change,
+  // so a flag still set is delivered again with every unrelated one; kept across a reconfigure
+  // for the same reason.
+  bool last_emergency_stop_ = false;
+  bool last_guard_stop_ = false;
+
   InitSequenceReport init_report_;
   std::mutex init_mtx_;
   std::condition_variable init_cv_;

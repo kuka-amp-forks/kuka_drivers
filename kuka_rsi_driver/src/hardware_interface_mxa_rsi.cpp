@@ -42,6 +42,14 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_init(
   RCLCPP_INFO(
     logger_, "Robot model verification: %s", verify_robot_model_ ? "enabled" : "disabled");
 
+  if (!ReadTimeoutParameter(
+        "mxa_status_timeout_ms", DEFAULT_MXA_STATUS_TIMEOUT, mxa_status_timeout_))
+  {
+    return CallbackReturn::ERROR;
+  }
+  RCLCPP_INFO(
+    logger_, "mxA status timeout: %ld ms", static_cast<int64_t>(mxa_status_timeout_.count()));
+
   return CallbackReturn::SUCCESS;
 }
 
@@ -59,6 +67,16 @@ KukaMxaRsiHardwareInterface::export_state_interfaces()
 
 CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle::State &)
 {
+  if (mxa_status_timeout_ >= SDK_MXA_RECEIVE_TIMEOUT)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "mxa_status_timeout_ms is %ld, it must stay below the SDK's %ld ms mxA receive timeout",
+      static_cast<int64_t>(mxa_status_timeout_.count()),
+      static_cast<int64_t>(SDK_MXA_RECEIVE_TIMEOUT.count()));
+    return CallbackReturn::FAILURE;
+  }
+
   kuka::external::control::kss::Configuration mxa_config;
   mxa_config.installed_interface =
     kuka::external::control::kss::Configuration::InstalledInterface::MXA_RSI;
@@ -67,6 +85,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   mxa_config.client_port = std::stoi(info_.hardware_parameters.at("client_port"));
   mxa_config.mxa_client_port = std::stoi(info_.hardware_parameters.at("mxa_client_port"));
 
+  mxa_loss_exported_ = false;
   {
     std::lock_guard<std::mutex> lk{init_mtx_};
     init_report_ = {};
@@ -85,7 +104,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     mxa_config.client_port);
 
   auto status = robot_ptr_->RegisterStatusResponseHandler(
-    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager));
+    std::make_unique<StatusUpdateHandler>(&control_state_.status_manager, this));
   if (status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Registering status response handler failed: %s", status.message);
@@ -121,6 +140,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     RCLCPP_INFO(logger_, "Robot model verification is disabled, proceeding with the connection.");
   }
 
+  control_state_.status_manager.StampTelegram();
   return CallbackReturn::SUCCESS;
 }
 
@@ -134,12 +154,149 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_deactivate(const rclcpp_lifecycle
   return KukaRSIHardwareInterfaceBase::extended_deactivation(state);
 }
 
+// ERROR releases the client; the mxA-loss label belongs only to read()'s own timeout latch.
+CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::State & state)
+{
+  RCLCPP_ERROR(
+    logger_, "Releasing the mxA client, stop_reason reads '%s'; configure again to reconnect",
+    kuka_drivers_core::StopReasonName(event_state_.stop_reason.load()));
+  return KukaRSIHardwareInterfaceBase::on_error(state);
+}
+
+std::chrono::milliseconds KukaMxaRsiHardwareInterface::MxaSilence() const
+{
+  const auto age = [this]
+  {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+      control_state_.status_manager.TelegramAge());
+  };
+  if (age() <= mxa_status_timeout_ || robot_ptr_->IsStatusTelegramPending())
+  {
+    return std::chrono::milliseconds{0};
+  }
+  return age();
+}
+
 return_type KukaMxaRsiHardwareInterface::read(
   const rclcpp::Time & time, const rclcpp::Duration & duration)
 {
+  const auto age = MxaSilence();
+  if (age > mxa_status_timeout_)
+  {
+    if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
+    {
+      RCLCPP_ERROR(
+        logger_, "Stopping: no mxA telegram within %ld ms, the newest is %ld ms old",
+        static_cast<int64_t>(mxa_status_timeout_.count()), static_cast<int64_t>(age.count()));
+    }
+    if (mxa_loss_exported_)
+    {
+      UpdateStopReasonState();
+      return return_type::ERROR;
+    }
+    // Export the error for one cycle so the event broadcaster publishes it before ERROR.
+    mxa_loss_exported_ = true;
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    return KukaRSIHardwareInterfaceBase::read(time, duration);
+  }
+
   control_state_.status_manager.UpdateStateInterfaces();
+  if (runtime_state_.is_active.load(std::memory_order_relaxed))
+  {
+    LatchStatusStop();
+  }
 
   return KukaRSIHardwareInterfaceBase::read(time, duration);
+}
+
+// An exported mxA loss errors the component rather than deactivating it.
+return_type KukaMxaRsiHardwareInterface::write(
+  const rclcpp::Time & time, const rclcpp::Duration & duration)
+{
+  if (mxa_loss_exported_)
+  {
+    return return_type::ERROR;
+  }
+  return KukaRSIHardwareInterfaceBase::write(time, duration);
+}
+
+bool KukaMxaRsiHardwareInterface::LatchStatusStop()
+{
+  using kuka_drivers_core::StopReason;
+  auto status = control_state_.status_manager.Snapshot();
+
+  StopReason reason = StopReason::NONE;
+  if (status.IsEmergencyStopActive())
+  {
+    reason = StopReason::EMERGENCY_STOP;
+  }
+  else if (status.IsGuardStopActive())
+  {
+    reason = StopReason::GUARD_STOP;
+  }
+  else if (!status.DrivesPowered())
+  {
+    reason = StopReason::DRIVES_NOT_POWERED;
+  }
+  else if (!status.IsMotionPossible())
+  {
+    reason = StopReason::MOTION_NOT_POSSIBLE;
+  }
+  else if (!status.IsOperationModeExt())
+  {
+    reason = StopReason::NOT_IN_EXT;
+  }
+
+  if (reason == StopReason::NONE || !LatchStopReason(reason))
+  {
+    return false;
+  }
+  set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+  RCLCPP_ERROR(
+    logger_, "Stopping: %s (%s, IPOC %lu)", kuka_drivers_core::StopReasonName(reason),
+    status.Describe().c_str(), diagnostics_state_.last_ipoc);
+  return true;
+}
+
+// E-stop/guard stop are faults in any state; drives/motion/EXT stay ACTIVE-only (LatchStatusStop).
+// While active, LatchStatusStop (called from read()) already covers e-stop/guard stop with the
+// full status and IPOC in the log; this only fills the gap for every other state.
+void KukaMxaRsiHardwareInterface::OnStatusUpdate(
+  const kuka::external::control::kss::StatusUpdate & update)
+{
+  using kuka_drivers_core::StopReason;
+
+  // Only a rising edge is a new event; the flag stays set for as long as its cause is held.
+  const bool emergency_stop_raised = update.emergency_stop_ && !last_emergency_stop_;
+  const bool guard_stop_raised = update.guard_stop_ && !last_guard_stop_;
+  last_emergency_stop_ = update.emergency_stop_;
+  last_guard_stop_ = update.guard_stop_;
+
+  if (runtime_state_.is_active.load(std::memory_order_relaxed))
+  {
+    return;
+  }
+
+  StopReason reason = StopReason::NONE;
+  if (emergency_stop_raised)
+  {
+    reason = StopReason::EMERGENCY_STOP;
+  }
+  else if (guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed))
+  {
+    // Ignore a guard stop raised by our own stop request.
+    reason = StopReason::GUARD_STOP;
+  }
+
+  if (reason == StopReason::NONE || !LatchStopReason(reason))
+  {
+    return;
+  }
+  set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+  RCLCPP_ERROR(
+    logger_, "Stopping: %s (emergency_stop=%d guard_stop=%d), independent of the component's state",
+    kuka_drivers_core::StopReasonName(reason), static_cast<int>(update.emergency_stop_),
+    static_cast<int>(update.guard_stop_));
 }
 
 void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)
@@ -167,29 +324,6 @@ void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)
     }
   }
   init_cv_.notify_one();
-}
-
-void KukaMxaRsiHardwareInterface::Read(const int64_t request_timeout)
-{
-  if (control_state_.status_manager.IsEmergencyStopActive())
-  {
-    RCLCPP_ERROR(logger_, "Emergency stop detected!");
-    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-  }
-  else if (!control_state_.status_manager.DrivesPowered())
-  {
-    RCLCPP_ERROR(logger_, "Drives are not powered!");
-    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-  }
-  else if (
-    !control_state_.status_manager.IsMotionPossible() &&
-    this->get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_ACTIVE)
-  {
-    RCLCPP_ERROR(logger_, "Motion is not possible");
-    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-  }
-
-  KukaRSIHardwareInterfaceBase::Read(request_timeout);
 }
 
 void KukaMxaRsiHardwareInterface::CreateRobotInstance(

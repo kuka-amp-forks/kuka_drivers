@@ -16,6 +16,7 @@
 #define KUKA_RSI_DRIVER__ROBOT_STATUS_MANAGER_HPP_
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -82,6 +83,17 @@ public:
 
   bool IsMotionPossible() { return static_cast<bool>(motion_possible_); }
 
+  bool IsGuardStopActive() { return static_cast<bool>(guard_stop_); }
+
+  std::string Describe() const
+  {
+    return "emergency_stop=" + std::to_string(static_cast<int>(emergency_stop_)) +
+           " guard_stop=" + std::to_string(static_cast<int>(guard_stop_)) +
+           " drives_powered=" + std::to_string(static_cast<int>(drives_powered_)) +
+           " motion_possible=" + std::to_string(static_cast<int>(motion_possible_)) +
+           " operation_mode=" + std::to_string(static_cast<int>(operation_mode_));
+  }
+
 private:
   double control_mode_ = 0.0;
   double cycle_time_ = 0.0;
@@ -140,10 +152,43 @@ public:
     return status_interfaces_.IsMotionPossible();
   }
 
+  bool IsGuardStopActive()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_interfaces_.IsGuardStopActive();
+  }
+
+  std::string Describe()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_interfaces_.Describe();
+  }
+
+  // One consistent copy of all flags, for callers that would otherwise take the lock per flag.
+  StatusInterfaces Snapshot()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_interfaces_;
+  }
+
+  // Called on the mxA thread for every received telegram, changed flags or not.
+  void StampTelegram()
+  {
+    last_telegram_ns_.store(
+      std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
+  }
+
+  std::chrono::nanoseconds TelegramAge() const
+  {
+    return std::chrono::steady_clock::now().time_since_epoch() -
+           std::chrono::steady_clock::duration(last_telegram_ns_.load(std::memory_order_relaxed));
+  }
+
 private:
   StatusInterfaces status_interfaces_;         // Used as ROS 2 state interface
   StatusInterfaces actual_status_interfaces_;  // Stores actual state
   std::mutex status_mtx_;
+  std::atomic<std::chrono::steady_clock::rep> last_telegram_ns_{0};
 };
 
 }  // namespace kuka_rsi_driver
