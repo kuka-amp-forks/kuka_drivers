@@ -369,8 +369,7 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
 
 namespace
 {
-// Severity of a cause, highest first: emergency stop, guard stop, then every other cause alike.
-// A more severe cause replaces a latched one; between equals the first wins.
+// Priority of a stop cause; a more severe cause replaces a latched one.
 int StopReasonSeverity(kuka_drivers_core::StopReason reason)
 {
   switch (reason)
@@ -930,8 +929,7 @@ void KukaRSIHardwareInterfaceBase::RequestStop()
   runtime_state_.stop_pending_reads = 0;
   runtime_state_.stop_requested_time = std::chrono::steady_clock::now();
   runtime_state_.stop_timeout_reported = false;
-  // Before the requests go out: the KRC answers them with a drives-off that some cells report as
-  // a guard stop, and the status thread must already know that stop is commanded.
+  // Set before the stop request goes out so the status thread sees it in time.
   runtime_state_.stop_pending = true;
 
   const auto cancel_status = robot_ptr_->RequestRsiProgramCancel();

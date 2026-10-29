@@ -284,9 +284,7 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
   }
   else if (guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed))
   {
-    // A KRC that disables the drives through safety (r930: "Drives disabled by Safety.") raises
-    // this on the driver's own cancel and drives-off too; while that stop is pending it is the
-    // stop's doing, not a fault, and must not survive a clean deactivate as stop_reason 4.
+    // Ignore a guard stop raised by our own stop request.
     reason = StopReason::GUARD_STOP;
   }
 
