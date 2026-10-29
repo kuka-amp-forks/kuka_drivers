@@ -93,6 +93,11 @@ private:
   std::chrono::milliseconds mxa_status_timeout_{DEFAULT_MXA_STATUS_TIMEOUT};
   // Set once read() has exported an mxA loss as server_state; the next write() or read() errors.
   bool mxa_loss_exported_ = false;
+  // E-stop and guard stop of the last telegram, mxA thread only. Telegrams come only on a change,
+  // so a flag still set is delivered again with every unrelated one; kept across a reconfigure
+  // for the same reason.
+  bool last_emergency_stop_ = false;
+  bool last_guard_stop_ = false;
 
   InitSequenceReport init_report_;
   std::mutex init_mtx_;

@@ -92,7 +92,8 @@ public:
   }
 
 protected:
-  // First cause wins; true when this call set it. write() returns DEACTIVATE while it is set.
+  // Latches reason unless one at least as severe is set already (see StopReasonSeverity); true
+  // when this call set it. write() returns DEACTIVATE while it is set.
   KUKA_RSI_DRIVER_LOCAL bool LatchStopReason(kuka_drivers_core::StopReason reason);
 
   KUKA_RSI_DRIVER_LOCAL bool SetupRobot(
@@ -194,7 +195,8 @@ protected:
     std::atomic<bool> is_active{false};
     bool msg_received = false;
     // Set by on_deactivate, cleared by read() once the cancel is confirmed and the drives are off.
-    bool stop_pending = false;
+    // Read by the mxA status thread: a guard stop inside this window is the stop's own doing.
+    std::atomic<bool> stop_pending{false};
     bool cancel_confirmed = false;
     // Counts inactive read() calls (not RSI cycles) while a stop is pending.
     uint64_t stop_pending_reads = 0;
