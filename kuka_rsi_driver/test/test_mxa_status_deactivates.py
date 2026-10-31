@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mxa_status_fake_support import OP_MODE_T1  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
     ANY_STATE_STOP_LINE,
+    JTC,
     RECEIVE_FAILURE_LINE,
     STATUS_STOP_LINE,
     STOP_REASON_DRIVES_NOT_POWERED,
@@ -104,6 +105,7 @@ class TestMxaStatusDeactivates(RsiFaultTestCase):
         self.start_streaming(log)
         # A slow cancel keeps the stop pending long enough to inject into.
         self.inject("cancel_cycles=100")
+        self.switch(deactivate=[JTC])
 
         log = LogCursor(proc_output)
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")

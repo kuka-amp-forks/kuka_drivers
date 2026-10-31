@@ -94,9 +94,6 @@ class FaultInjectionTestCase(unittest.TestCase):
         self.node.create_subscription(
             String, f"{self.node.node_name_}/rsi/state", self._on_state, 10
         )
-        self.node.create_subscription(
-            String, f"{self.node.node_name_}/rsi/command", self._on_command, 10
-        )
 
     def tearDown(self):
         self.node.destroy_node()
@@ -109,6 +106,12 @@ class FaultInjectionTestCase(unittest.TestCase):
     def _on_command(self, msg):
         root = ET.fromstring(msg.data)
         self.commands.append(int(root.find("IPOC").text))
+
+    def _subscribe_commands(self):
+        """Only where a test reads them; the extra message changes what spin_once drains."""
+        self.node.create_subscription(
+            String, f"{self.node.node_name_}/rsi/command", self._on_command, 10
+        )
 
     def _replace_client(self, replies):
         self.fake_client.close()
@@ -191,10 +194,10 @@ class FaultInjectionTestCase(unittest.TestCase):
         self._run_cycles(3)
         # One reply behind, carrying a correction, then the matching one without.
         self._replace_client(lambda ipoc: [_sen(ipoc - 1, a1="1.5"), _sen(ipoc)])
+        self._subscribe_commands()
         self._run_cycles(4)
-        self._spin_until(lambda: len(self.commands) == 7)
-        self.assertEqual(len(self.states), 7)
-        self.assertEqual(self.commands, self.states)
+        self._spin_until(lambda: len(self.commands) == 4 and len(self.states) == 7)
+        self.assertEqual(self.commands, self.states[3:])
         self.assertEqual(self.node.timeout_count, 0)
         self.assertEqual(self.node.act_joint_pos[0], self.node.initial_joint_pos[0])
 
