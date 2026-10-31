@@ -127,7 +127,10 @@ def _spawner(name, param_file=None, inactive=False):
 
 
 def fault_launch_description(
-    read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS, respawn_simulator=False, inactive_controllers=()
+    read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS,
+    respawn_simulator=False,
+    inactive_controllers=(),
+    gpio_config="",
 ):
     """
     control_node on the fake: JTC inactive; JSB, stop_reason and event broadcasters active.
@@ -135,8 +138,13 @@ def fault_launch_description(
     The simulator exits on the stop flag, so a test that reactivates after a stop packet
     needs it respawned; it comes back silent, and resume_and_activate resumes it.
     inactive_controllers are (name, file in test/config) pairs, loaded inactive.
+    gpio_config is a xacro file with the gpio_config macro; empty leaves the gpio empty.
     """
-    description = {"robot_description": robot_description(read_timeout_ms=read_timeout_ms)}
+    description = {
+        "robot_description": robot_description(
+            read_timeout_ms=read_timeout_ms, gpio_config=gpio_config
+        )
+    }
 
     control_node = launch_ros.actions.Node(
         package="kuka_drivers_core",

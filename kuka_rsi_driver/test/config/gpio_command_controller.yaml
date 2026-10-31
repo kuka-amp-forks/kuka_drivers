@@ -1,0 +1,10 @@
+# Test-only: claims the gpio/do_1 command interface, which is not a mode and is accepted.
+/**/gpio_command_controller:
+  ros__parameters:
+    type: gpio_controllers/GpioCommandController
+    gpios:
+      - gpio
+    command_interfaces:
+      gpio:
+        interfaces:
+          - do_1

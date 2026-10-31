@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A switch to joint velocity is refused in prepare_command_mode_switch; JTC keeps control."""
+"""A switch to joint velocity is refused in prepare_command_mode_switch; a GPIO command is not."""
 
 import os
 import re
@@ -22,6 +22,7 @@ import unittest
 import launch_testing.asserts
 import launch_testing.markers
 import pytest
+from ament_index_python.packages import get_package_share_directory
 from controller_manager_msgs.srv import SwitchController
 from lifecycle_msgs.msg import State
 
@@ -35,6 +36,10 @@ from rsi_fault_support import (  # noqa: E402
 )
 
 VELOCITY_CONTROLLER = "velocity_command_controller"
+GPIO_CONTROLLER = "gpio_command_controller"
+GPIO_CONFIG = os.path.join(
+    get_package_share_directory("kuka_rsi_driver"), "test", "config", "gpio_command_only.xacro"
+)
 REFUSED_LINE = re.compile(
     r"Refusing the command mode switch: '([^']+)' requested, only joint position is supported"
 )
@@ -44,12 +49,23 @@ REFUSED_LINE = re.compile(
 @launch_testing.markers.keep_alive
 def generate_test_description():
     return fault_launch_description(
-        inactive_controllers=[(VELOCITY_CONTROLLER, "velocity_command_controller.yaml")]
+        respawn_simulator=True,
+        inactive_controllers=[
+            (VELOCITY_CONTROLLER, "velocity_command_controller.yaml"),
+            (GPIO_CONTROLLER, "gpio_command_controller.yaml"),
+        ],
+        gpio_config=GPIO_CONFIG,
     )
 
 
 class TestRefusesUnsupportedModeSwitch(RsiFaultTestCase):
-    def test_refuses_unsupported_mode_switch(self, proc_output, proc_info):
+    def finish(self, log, *controllers):
+        self.switch(deactivate=list(controllers))
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.wait_for_simulator_respawn(log)
+
+    def test_refuses_unsupported_mode_switch(self, proc_output):
         log = LogCursor(proc_output)
         self.start_streaming(log)
         self.assertEqual(self.controller_state(VELOCITY_CONTROLLER), "inactive")
@@ -72,9 +88,22 @@ class TestRefusesUnsupportedModeSwitch(RsiFaultTestCase):
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
         self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
         self.move_joint_and_wait()
+        self.finish(log, JTC)
 
-        self.switch(deactivate=[JTC])
-        self.deactivate_and_wait_for_simulator(proc_info)
+    def test_accepts_gpio_command_switch(self, proc_output):
+        log = LogCursor(proc_output)
+        self.start_streaming(log)
+        self.assertEqual(self.controller_state(GPIO_CONTROLLER), "inactive")
+
+        log = LogCursor(proc_output)
+        self.switch(activate=[GPIO_CONTROLLER])
+        self.assertEqual(log.matches(REFUSED_LINE), [], "GPIO command switch refused")
+        self.assertEqual(self.controller_state(GPIO_CONTROLLER), "active")
+        self.assertEqual(self.controller_state(JTC), "active")
+        self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
+        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.move_joint_and_wait()
+        self.finish(log, GPIO_CONTROLLER, JTC)
 
 
 @launch_testing.post_shutdown_test()

@@ -67,7 +67,7 @@ FAKE_REPORT_LINE = re.compile(
 )
 
 
-def robot_description(extra_params="", read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS):
+def robot_description(extra_params="", read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS, gpio_config=""):
     """Build the mxa_rsi description with the test-only plugin in place of the shipped one."""
     urdf = xacro.process_file(
         os.path.join(
@@ -80,6 +80,7 @@ def robot_description(extra_params="", read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS
             "controller_ip": "127.0.0.1",
             "verify_robot_model": "true",
             "roundtrip_time": "4000",
+            "gpio_config": gpio_config,
         },
     ).toxml()
     assert PRODUCTION_PLUGIN in urdf
