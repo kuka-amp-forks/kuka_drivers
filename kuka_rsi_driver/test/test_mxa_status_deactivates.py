@@ -15,6 +15,7 @@
 """Each mxA status that forbids motion deactivates the component with its own stop_reason."""
 
 import os
+import re
 import sys
 import unittest
 
@@ -26,6 +27,7 @@ from lifecycle_msgs.msg import State
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mxa_status_fake_support import OP_MODE_T1  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
+    ANY_STATE_STOP_LINE,
     RECEIVE_FAILURE_LINE,
     STATUS_STOP_LINE,
     STOP_REASON_DRIVES_NOT_POWERED,
@@ -37,6 +39,9 @@ from rsi_fault_support import (  # noqa: E402
     RsiFaultTestCase,
     fault_launch_description,
 )
+
+GUARD_STOP_INJECTED_LINE = re.compile(r"mxA status fake: guard_stop=1")
+STOP_COMPLETE_LINE = re.compile(r"Stop complete")
 
 
 @pytest.mark.launch_test
@@ -93,6 +98,27 @@ class TestMxaStatusDeactivates(RsiFaultTestCase):
         self.stop_on_status(
             proc_output, "guard_stop=1", STOP_REASON_GUARD_STOP, "guard stop", "guard_stop=0"
         )
+
+    def test_guard_stop_during_own_stop_is_not_latched(self, proc_output):
+        log = LogCursor(proc_output)
+        self.start_streaming(log)
+        # A slow cancel keeps the stop pending long enough to inject into.
+        self.inject("cancel_cycles=100")
+
+        log = LogCursor(proc_output)
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.inject("guard_stop=1")
+        injected = log.wait_for_match(GUARD_STOP_INJECTED_LINE, timeout=5)
+        self.assertIsNotNone(injected, "guard stop not delivered")
+        complete = log.wait_for_match(STOP_COMPLETE_LINE, timeout=5)
+        self.assertIsNotNone(complete, "stop never completed")
+        self.assertLess(injected.start(), complete.start(), "stop completed before the guard stop")
+        self._spin_for(0.5)
+        self.assertEqual(log.matches(ANY_STATE_STOP_LINE), [], "own stop latched as a guard stop")
+        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+
+        self.inject("guard_stop=0 cancel_cycles=12")
+        self.wait_for_simulator_respawn(log)
 
     def test_op_mode_change_deactivates(self, proc_output):
         self.stop_on_status(
