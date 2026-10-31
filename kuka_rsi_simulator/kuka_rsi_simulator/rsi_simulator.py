@@ -552,11 +552,6 @@ class RSISimulator(Node):
             self.act_joint_pos = self.initial_joint_pos + des_joint_correction_absolute
             self.act_joint_vel = des_joint_velocity
             self.act_joint_torque = des_joint_torque
-            if not self.ignore_ipoc_ and not stop_flag and ipoc_recv != send_ipoc:
-                self.get_logger().warning("Packet is late")
-                self.get_logger().warning(f"sent ipoc: {send_ipoc}, received: {ipoc_recv}")
-                if send_ipoc != 0:
-                    self.timeout_count += 1
             if self.repeated_ipoc_remaining_ > 0:
                 self.repeated_ipoc_remaining_ -= 1
             else:
