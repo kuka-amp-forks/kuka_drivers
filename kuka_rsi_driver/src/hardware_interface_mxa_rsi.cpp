@@ -165,16 +165,13 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::Sta
 
 std::chrono::milliseconds KukaMxaRsiHardwareInterface::MxaSilence() const
 {
-  const auto age = [this]
-  {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-      control_state_.status_manager.TelegramAge());
-  };
-  if (age() <= mxa_status_timeout_ || robot_ptr_->IsStatusTelegramPending())
+  const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+    control_state_.status_manager.TelegramAge());
+  if (age <= mxa_status_timeout_ || robot_ptr_->IsStatusTelegramPending())
   {
     return std::chrono::milliseconds{0};
   }
-  return age();
+  return age;
 }
 
 return_type KukaMxaRsiHardwareInterface::read(
