@@ -390,7 +390,7 @@ int StopReasonSeverity(kuka_drivers_core::StopReason reason)
 void KukaRSIHardwareInterfaceBase::OnControlEvent(
   kuka_drivers_core::StopReason reason, const std::string & detail)
 {
-  if (!runtime_state_.is_active.load(std::memory_order_relaxed) || !LatchStopReason(reason))
+  if (!runtime_state_.is_active.load(std::memory_order_acquire) || !LatchStopReason(reason))
   {
     return;
   }
@@ -883,7 +883,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 
   runtime_state_.msg_received = false;
   ResetStopReason();
-  runtime_state_.is_active.store(true, std::memory_order_relaxed);
+  runtime_state_.is_active.store(true, std::memory_order_release);
 
   RCLCPP_INFO(
     logger_, "Received position data from robot controller %.0f ms after the start request",
@@ -899,7 +899,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
   using kuka::external::control::ReturnCode;
 
   // Before the stop packet, so the stop event it causes is not latched as a fault.
-  runtime_state_.is_active.store(false, std::memory_order_relaxed);
+  runtime_state_.is_active.store(false, std::memory_order_release);
 
   const uint64_t entry_ipoc = diagnostics_state_.last_ipoc;
   bool stop_sent = false;
