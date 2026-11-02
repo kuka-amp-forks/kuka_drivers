@@ -44,8 +44,8 @@ def generate_test_description():
 
 class TestFaultsOnReadTimeout(RsiFaultTestCase):
     def test_faults_on_read_timeout(self, proc_output):
+        proc_output.assertWaitFor(f"RSI read timeout: {READ_TIMEOUT_MS} ms", timeout=10)
         log = LogCursor(proc_output)
-        self.assertTrue(log.wait_for(f"RSI read timeout: {READ_TIMEOUT_MS} ms", timeout=10))
         self.start_streaming(log)
 
         log = LogCursor(proc_output)
