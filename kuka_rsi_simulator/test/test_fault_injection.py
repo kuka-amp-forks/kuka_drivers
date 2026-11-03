@@ -20,8 +20,10 @@ so none of this depends on kuka_rsi_driver's reaction to a fault.
 """
 
 import itertools
+import signal
 import socket
 import threading
+import time
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -32,10 +34,18 @@ from std_msgs.msg import String
 from kuka_rsi_simulator.rsi_simulator import RSISimulator
 
 
-class _FakeRsiClient:
-    """A minimal RSI peer: echoes the IPOC it receives, applies no correction."""
+def _sen(ipoc, a1="0", stop=0):
+    return (
+        f'<Sen><AK A1="{a1}" A2="0" A3="0" A4="0" A5="0" A6="0"/>'
+        f"<IPOC>{ipoc}</IPOC><Stop>{stop}</Stop></Sen>"
+    ).encode()
 
-    def __init__(self):
+
+class _FakeRsiClient:
+    """A minimal RSI peer: answers each packet with replies(ipoc), by default one matching echo."""
+
+    def __init__(self, replies=None):
+        self._replies = replies or (lambda ipoc: [_sen(ipoc)])
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.bind(("127.0.0.1", 0))
         self._socket.settimeout(0.5)
@@ -50,12 +60,9 @@ class _FakeRsiClient:
                 data, addr = self._socket.recvfrom(2048)
             except socket.timeout:
                 continue
-            ipoc = ET.fromstring(data).find("IPOC").text
-            reply = (
-                b'<Sen><AK A1="0" A2="0" A3="0" A4="0" A5="0" A6="0"/>'
-                b"<IPOC>" + ipoc.encode("utf-8") + b"</IPOC><Stop>0</Stop></Sen>"
-            )
-            self._socket.sendto(reply, addr)
+            ipoc = int(ET.fromstring(data).find("IPOC").text)
+            for reply in self._replies(ipoc):
+                self._socket.sendto(reply, addr)
 
     def close(self):
         self._stop.set()
@@ -83,6 +90,7 @@ class FaultInjectionTestCase(unittest.TestCase):
         # otherwise also fire during spin_once and add uncounted cycles.
         self.node.destroy_timer(self.node.timer)
         self.states = []
+        self.commands = []
         self.node.create_subscription(
             String, f"{self.node.node_name_}/rsi/state", self._on_state, 10
         )
@@ -94,6 +102,27 @@ class FaultInjectionTestCase(unittest.TestCase):
     def _on_state(self, msg):
         root = ET.fromstring(msg.data)
         self.states.append(int(root.find("IPOC").text))
+
+    def _on_command(self, msg):
+        root = ET.fromstring(msg.data)
+        self.commands.append(int(root.find("IPOC").text))
+
+    def _subscribe_commands(self):
+        """Only where a test reads them; the extra message changes what spin_once drains."""
+        self.node.create_subscription(
+            String, f"{self.node.node_name_}/rsi/command", self._on_command, 10
+        )
+
+    def _replace_client(self, replies):
+        self.fake_client.close()
+        self.fake_client = _FakeRsiClient(replies)
+        self.node.rsi_port_address_ = self.fake_client.port
+
+    def _spin_until(self, condition, timeout=2.0):
+        end = time.monotonic() + timeout
+        while not condition() and time.monotonic() < end:
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+        self.assertTrue(condition())
 
     def _run_cycles(self, count):
         """Drive the node's timer callback directly, bypassing the ROS timer.
@@ -160,6 +189,25 @@ class FaultInjectionTestCase(unittest.TestCase):
         # The armed IPOC is sent once normally, then repeated 3 more times.
         self.assertTrue(4 in run_lengths, f"no run of 4 identical IPOCs, ipocs={self.states}")
         self.assertTrue(all(length == 1 for length in run_lengths if length != 4))
+
+    def test_simulator_discards_stale_reply_and_uses_matching_one(self):
+        self._run_cycles(3)
+        # One reply behind, carrying a correction, then the matching one without.
+        self._replace_client(lambda ipoc: [_sen(ipoc - 1, a1="1.5"), _sen(ipoc)])
+        self._subscribe_commands()
+        self._run_cycles(4)
+        self._spin_until(lambda: len(self.commands) == 4 and len(self.states) == 7)
+        self.assertEqual(self.commands, self.states[3:])
+        self.assertEqual(self.node.timeout_count, 0)
+        self.assertEqual(self.node.act_joint_pos[0], self.node.initial_joint_pos[0])
+
+    def test_simulator_stops_on_stale_stop_reply(self):
+        self._run_cycles(3)
+        # Replies to two earlier packets, the last one carrying the stop flag.
+        self._replace_client(lambda ipoc: [_sen(ipoc - 2), _sen(ipoc - 1, stop=1)])
+        self.addCleanup(signal.signal, signal.SIGINT, signal.getsignal(signal.SIGINT))
+        with self.assertRaises(SystemExit):
+            self.node.timer_callback()
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@
 import signal
 import socket
 import sys
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -526,29 +527,38 @@ class RSISimulator(Node):
             )
             self.rsi_act_pub_.publish(String(data=msg.decode("utf-8")))
             self.socket_.sendto(msg, (self.rsi_ip_address_, self.rsi_port_address_))
-            recv_msg, _ = self.socket_.recvfrom(1024)
+            deadline = time.monotonic() + self.cycle_time
+            stale = 0
+            while True:
+                self.socket_.settimeout(max(deadline - time.monotonic(), 0.0))
+                recv_msg, _ = self.socket_.recvfrom(1024)
+                (
+                    des_joint_correction_absolute,
+                    des_joint_velocity,
+                    des_joint_torque,
+                    ipoc_recv,
+                    stop_flag,
+                ) = parse_rsi_xml_sen(recv_msg, self.rsi_xml_config_)
+                if stop_flag or self.ignore_ipoc_ or ipoc_recv == send_ipoc:
+                    break
+                # A reply to an earlier packet; the one for this packet may still arrive.
+                stale += 1
+            if stale:
+                self.get_logger().warning(
+                    f"Discarded {stale} stale reply(ies) before ipoc {send_ipoc}"
+                )
             self.rsi_cmd_pub_.publish(String(data=recv_msg.decode("utf-8")))
             self.get_logger().warning(f"msg: {recv_msg}")
-            (
-                des_joint_correction_absolute,
-                des_joint_velocity,
-                des_joint_torque,
-                ipoc_recv,
-                stop_flag,
-            ) = parse_rsi_xml_sen(recv_msg, self.rsi_xml_config_)
             self.act_joint_pos = self.initial_joint_pos + des_joint_correction_absolute
             self.act_joint_vel = des_joint_velocity
             self.act_joint_torque = des_joint_torque
-            if not self.ignore_ipoc_ and ipoc_recv != send_ipoc:
-                self.get_logger().warning("Packet is late")
-                self.get_logger().warning(f"sent ipoc: {send_ipoc}, received: {ipoc_recv}")
-                if send_ipoc != 0:
-                    self.timeout_count += 1
             if self.repeated_ipoc_remaining_ > 0:
                 self.repeated_ipoc_remaining_ -= 1
             else:
                 self.ipoc += 1
             if stop_flag:
+                # Already exiting; a SIGINT during the teardown must not end it with -2.
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
                 self.on_shutdown()
                 sys.exit()
         except OSError:
@@ -564,17 +574,22 @@ class RSISimulator(Node):
 def main():
     rclpy.init()
     node = RSISimulator("rsi_simulator_node")
+
+    # The handler runs inside the executor, so it only unwinds spin; shutdown happens after it.
+    def _sigint_handler(signum, frame):
+        node.get_logger().info("SIGINT received, shutting down")
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, _sigint_handler)
     node.get_logger().info("Started")
 
-    def _sigterm_handler(signum, frame):
-        node.get_logger().info("SIGINT received, shutting down")
-        rclpy.shutdown()
-
-    signal.signal(signal.SIGINT, _sigterm_handler)
-
-    rclpy.spin(node)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     node.on_shutdown()
     node.get_logger().info("Shutting down")
+    rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
