@@ -63,9 +63,12 @@ jobs:
           # else keeps resolving from the snapshot.
           echo "deb [trusted=yes] http://packages.ros.org/ros2-testing/ubuntu ${UBUNTU_CODENAME} main" \
             > /etc/apt/sources.list.d/ros2-testing.list
+          # Match by host, not Release Origin: testing's Release says "Origin: ROS",
+          # identical to the snapshot's, so `Pin: release o=ros2-testing` never
+          # matches and testing was winning ties at the default priority 500.
           cat > /etc/apt/preferences.d/ros2-testing <<'EOF'
           Package: *
-          Pin: release o=ros2-testing
+          Pin: origin "packages.ros.org"
           Pin-Priority: 1
           EOF
           apt-get update -qq
@@ -109,6 +112,22 @@ jobs:
           dpkg-query -W -f='${Package} ${Version}\n' \
             ros-${ROS_DISTRO}-controller-manager ros-${ROS_DISTRO}-hardware-interface \
             ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-rmw-zenoh-cpp
+          # Fail if any installed version isn't also in the snapshot (same version in
+          # both repos is fine: the pin makes apt prefer the snapshot's copy either way).
+          allowed="ros-${ROS_DISTRO}-rmw-zenoh-cpp ros-${ROS_DISTRO}-zenoh-cpp-vendor"
+          leaked=""
+          for pkg in $(dpkg-query -W -f='${db:Status-Status} ${Package}\n' "ros-${ROS_DISTRO}-*" 2>/dev/null \
+              | awk '$1=="installed"{print $2}'); do
+            case " ${allowed} " in *" ${pkg} "*) continue ;; esac
+            ver=$(dpkg-query -W -f='${Version}' "${pkg}")
+            if ! apt-cache madison "${pkg}" | awk -v v="${ver}" -F' \\| ' '$2==v' | grep -q snapshots.ros.org; then
+              leaked="${leaked} ${pkg}=${ver}"
+            fi
+          done
+          if [ -n "${leaked}" ]; then
+            echo "Packages installed from ros2-testing beyond the pinned two:${leaked}" >&2
+            exit 1
+          fi
 
       - name: colcon build
         run: |
