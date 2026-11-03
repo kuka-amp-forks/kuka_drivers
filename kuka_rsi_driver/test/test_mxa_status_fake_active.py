@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""While active, read() reports an injected mxA condition. One launch per condition."""
+"""While active, an injected mxA condition stops the component. One launch per condition."""
 
 import os
 import sys
@@ -40,8 +40,8 @@ from mxa_status_fake_support import (  # noqa: E402
 
 # The RSI simulator exits on the stop flag, so each activation needs its own launch.
 CONDITIONS = [
-    ("motion_possible=0", "Motion is not possible"),
-    ("emergency_stop=1", "Emergency stop detected!"),
+    ("motion_possible=0", "Stopping: motion not possible"),
+    ("emergency_stop=1", "Stopping: emergency stop"),
 ]
 
 
@@ -108,7 +108,13 @@ class TestMxaStatusFakeActive(MxaStatusFakeTestCase):
         self.assertTrue(log.wait_for(f"Successful 'activate' of hardware '{COMPONENT}'", 30))
         self.inject(condition)
         self.assertTrue(log.wait_for(message, timeout=5), f"{condition} did not log {message!r}")
-        self.deactivate_and_wait_for_simulator(proc_info)
+        self.assertTrue(
+            self._spin_until(
+                lambda: self.component_state() == State.PRIMARY_STATE_INACTIVE, timeout=10
+            ),
+            "component stayed active",
+        )
+        proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
 
 
 @launch_testing.post_shutdown_test()

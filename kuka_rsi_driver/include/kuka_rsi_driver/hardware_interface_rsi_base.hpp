@@ -65,6 +65,8 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
 
+  KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_error(const rclcpp_lifecycle::State &) override;
+
   KUKA_RSI_DRIVER_PUBLIC
   return_type read(const rclcpp::Time &, const rclcpp::Duration &) override;
 
@@ -73,8 +75,15 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC void set_server_event(kuka_drivers_core::HardwareEvent);
 
+  // No-op here; the mxA interface overrides it to latch e-stop/guard stop in any state.
+  virtual KUKA_RSI_DRIVER_PUBLIC void OnStatusUpdate(
+    const kuka::external::control::kss::StatusUpdate &)
+  {
+  }
+
 protected:
-  // First cause wins; true when this call set it. write() returns DEACTIVATE while it is set.
+  // Latches reason unless one at least as severe is set already (see StopReasonSeverity); true
+  // when this call set it. write() returns DEACTIVATE while it is set.
   KUKA_RSI_DRIVER_LOCAL bool LatchStopReason(kuka_drivers_core::StopReason reason);
 
   KUKA_RSI_DRIVER_LOCAL bool SetupRobot(
@@ -82,7 +91,8 @@ protected:
     std::unique_ptr<kuka::external::control::EventHandler> event_handler,
     std::unique_ptr<kuka::external::control::kss::IEventHandlerExtension> extension);
 
-  virtual KUKA_RSI_DRIVER_LOCAL void Read(const int64_t request_timeout);
+  // Exported: the test plugin's vtable needs it since the mxA class no longer overrides it.
+  virtual KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout);
 
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
@@ -122,6 +132,9 @@ protected:
 
   // Reads the *_timeout_ms hardware parameters; false when one is set but not a positive integer.
   KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameters();
+
+  KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameter(
+    const char * name, std::chrono::milliseconds fallback, std::chrono::milliseconds & value);
 
   struct InitSequenceReport
   {
@@ -168,10 +181,12 @@ protected:
   struct RuntimeState
   {
     std::vector<int> gpio_states_to_commands_map;
-    bool is_active = false;
+    // Read by the mxA status thread, written by the lifecycle thread.
+    std::atomic<bool> is_active{false};
     bool msg_received = false;
     // Set by on_deactivate, cleared by read() once the cancel is confirmed and the drives are off.
-    bool stop_pending = false;
+    // Read by the mxA status thread: a guard stop inside this window is the stop's own doing.
+    std::atomic<bool> stop_pending{false};
     bool cancel_confirmed = false;
     // Counts inactive read() calls (not RSI cycles) while a stop is pending.
     uint64_t stop_pending_reads = 0;
@@ -244,9 +259,6 @@ private:
 
   KUKA_RSI_DRIVER_LOCAL bool LoadXmlConfig(
     const std::string & path, kuka::external::control::kss::Configuration & config) const;
-
-  KUKA_RSI_DRIVER_LOCAL bool ReadTimeoutParameter(
-    const char * name, std::chrono::milliseconds fallback, std::chrono::milliseconds & value);
 
   // Parsed XML config populated during on_init; applied to Configuration in SetupRobot.
   std::optional<kuka::external::control::kss::MotionStateXmlConfiguration> motion_state_xml_config_;

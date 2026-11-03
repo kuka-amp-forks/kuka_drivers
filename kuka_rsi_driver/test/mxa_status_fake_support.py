@@ -54,6 +54,9 @@ DEACTIVATION_LINE = re.compile(
     r"cancel and drives-off requested ([0-9.]+) ms after it"
 )
 STOP_COMPLETE_LINE = "Stop complete: RSI program cancelled and drives off"
+MXA_LOSS_LINE = re.compile(
+    r"Stopping: no mxA telegram within (\d+) ms, the newest is (\d+) ms old"
+)
 STOP_COMPLETE_DRIVES_ON_LINE = "Stop complete: RSI program cancelled, drives still report powered"
 STOP_PENDING_FAILURE = "Activation failed: stop pending"
 FIRST_PACKET_FAILURE = "Activation failed: no RSI packet within"
@@ -92,6 +95,7 @@ def fake_launch_description(
     simulator=True,
     respawn_simulator=False,
     read_timeout_ms=SIMULATOR_READ_TIMEOUT_MS,
+    initial_state="inactive",
 ):
     """
     control_node on the fake, starting inactive, with robot_state_publisher.
@@ -109,7 +113,7 @@ def fake_launch_description(
             description,
             {
                 "update_rate": update_rate,
-                "hardware_components_initial_state": {"inactive": [COMPONENT]},
+                "hardware_components_initial_state": {initial_state: [COMPONENT]},
             },
         ],
     )
@@ -243,6 +247,25 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         proc_info.assertWaitForShutdown(process="rsi_simulator", timeout=30)
 
+    def wait_for_simulator_respawn(self, log, timeout=10):
+        """
+        Wait for the respawned simulator's socket to be bound before anything depends on it.
+
+        "rsi_port:" alone is not enough: it comes from the parameter dump before the socket
+        is created, so a deactivate or activate started right after it can still race the
+        respawn (packet gaps, or a bind collision if a second respawn follows too soon).
+        """
+        self.assertTrue(log.wait_for("Started", timeout=timeout), "simulator did not respawn")
+
+    def wait_for_simulator_respawn_if_any(self, log, timeout=3):
+        """
+        Like wait_for_simulator_respawn, but do not fail if the simulator does not restart.
+
+        A deactivate with no RSI packet in flight never sends a stop flag, so the simulator
+        does not always restart.
+        """
+        log.wait_for("Started", timeout=timeout)
+
     def activate_and_stream(self, log, seconds=1.0):
         """Inject EXT with drives on, activate, and let a few RSI cycles stream."""
         self.inject(f"operation_mode={OP_MODE_EXT} drives_powered=1 motion_possible=1")
@@ -292,6 +315,7 @@ __all__ = [
     "FAKE_PORT",
     "FAKE_REPORT_LINE",
     "FIRST_PACKET_FAILURE",
+    "MXA_LOSS_LINE",
     "OP_MODE_EXT",
     "OP_MODE_T1",
     "RECEIVED_FIRST_PACKET",

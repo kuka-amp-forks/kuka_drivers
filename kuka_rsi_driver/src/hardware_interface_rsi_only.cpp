@@ -84,7 +84,7 @@ CallbackReturn KukaRSIHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
   }
 
   runtime_state_.msg_received = false;
-  runtime_state_.is_active = true;
+  runtime_state_.is_active.store(true, std::memory_order_relaxed);
   ResetStopReason();
 
   RCLCPP_INFO(logger_, "Received position data from robot controller!");
@@ -105,7 +105,7 @@ CallbackReturn KukaRSIHardwareInterface::on_deactivate(const rclcpp_lifecycle::S
     robot_ptr_->StopControlling();
   }
 
-  runtime_state_.is_active = false;
+  runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
   set_server_event(kuka_drivers_core::HardwareEvent::CONTROL_STOPPED);
 
