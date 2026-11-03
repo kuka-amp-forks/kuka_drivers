@@ -44,16 +44,18 @@ public:
     RCLCPP_INFO(logger_, "Control mode switch is in progress");
   }
 
-  void OnStopped(const std::string &) override
+  void OnStopped(const std::string & reason) override
   {
     hw_interface_->set_server_event(kuka_drivers_core::HardwareEvent::CONTROL_STOPPED);
     RCLCPP_INFO(logger_, "External control stopped");
+    hw_interface_->OnControlEvent(kuka_drivers_core::StopReason::CONTROL_STOPPED, reason);
   }
 
   void OnError(const std::string & reason) override
   {
     hw_interface_->set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
     RCLCPP_ERROR(logger_, "External control stopped due to an error: %s", reason.c_str());
+    hw_interface_->OnControlEvent(kuka_drivers_core::StopReason::CONTROL_ERROR, reason);
   }
 
 private:

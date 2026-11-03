@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Test-only: one GPIO command and no GPIO state; the name leads with a letter so the RSI XML stays well-formed. -->
+  <xacro:macro name="gpio_config">
+    <gpio name="gpio">
+      <command_interface name="do_1" data_type="bool">
+        <limits enable="false"/>
+        <param name="initial_value">false</param>
+      </command_interface>
+    </gpio>
+  </xacro:macro>
+</robot>
