@@ -47,7 +47,17 @@ CallbackReturn KukaRSIHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
 {
   ResetDiagnostics();
 
-  Read(10 * READ_TIMEOUT_MS);
+  RCLCPP_INFO(
+    logger_, "Waiting up to %ld ms for the first RSI packet",
+    static_cast<int64_t>(first_packet_timeout_.count()));
+  Read(first_packet_timeout_.count());
+  if (!runtime_state_.msg_received)
+  {
+    RCLCPP_ERROR(
+      logger_, "Activation failed: no RSI packet within %ld ms",
+      static_cast<int64_t>(first_packet_timeout_.count()));
+    return CallbackReturn::FAILURE;
+  }
 
   std::copy(
     interface_data_.position_states.cbegin(), interface_data_.position_states.cend(),
@@ -65,10 +75,17 @@ CallbackReturn KukaRSIHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
 
   CopyGPIOStatesToCommands();
 
-  Write();
+  if (!Write())
+  {
+    RCLCPP_ERROR(logger_, "Activation failed: sending the first RSI command failed");
+    robot_ptr_->ResetControlSignal();
+    RequestStop();
+    return CallbackReturn::FAILURE;
+  }
 
   runtime_state_.msg_received = false;
   runtime_state_.is_active = true;
+  ResetStopReason();
 
   RCLCPP_INFO(logger_, "Received position data from robot controller!");
   set_server_event(kuka_drivers_core::HardwareEvent::CONTROL_STARTED);

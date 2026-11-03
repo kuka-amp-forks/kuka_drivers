@@ -189,6 +189,15 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     interface_prefix_ = it->second;
   }
 
+  if (!ReadTimeoutParameters())
+  {
+    return CallbackReturn::ERROR;
+  }
+  RCLCPP_INFO(
+    logger_, "RSI read timeout: %ld ms (%.1f cycles at %.0f ms)",
+    static_cast<int64_t>(read_timeout_.count()), read_timeout_.count() / RSI_CYCLE_TIME_MS,
+    RSI_CYCLE_TIME_MS);
+
   return CallbackReturn::SUCCESS;
 }
 
@@ -218,6 +227,9 @@ KukaRSIHardwareInterfaceBase::export_state_interfaces()
   state_interfaces.emplace_back(
     interface_prefix_ + hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE,
     &event_state_.server_state);
+  state_interfaces.emplace_back(
+    interface_prefix_ + hardware_interface::STATE_PREFIX, hardware_interface::STOP_REASON,
+    &event_state_.stop_reason_state);
 
   return state_interfaces;
 }
@@ -278,6 +290,7 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     std::lock_guard<std::mutex> lk(event_state_.event_mutex);
     event_state_.server_state = static_cast<double>(event_state_.last_event);
   }
+  UpdateStopReasonState();
 
   // The first packet is received at activation, Read() should not be called before
   // Add short sleep to avoid RT thread eating CPU
@@ -291,21 +304,67 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     return return_type::OK;
   }
 
-  Read(READ_TIMEOUT_MS);
+  Read(read_timeout_.count());
+  if (
+    !runtime_state_.msg_received &&
+    LatchStopReason(kuka_drivers_core::StopReason::RSI_RECEIVE_FAILED))
+  {
+    RCLCPP_ERROR(
+      logger_, "Stopping: no RSI packet within %ld ms of the last one, IPOC %lu",
+      static_cast<int64_t>(read_timeout_.count()), diagnostics_state_.last_ipoc);
+  }
   return return_type::OK;
 }
 
+// A latched stop sends nothing and takes the component to INACTIVE through on_deactivate.
 return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclcpp::Duration &)
 {
+  if (event_state_.stop_reason.load() != kuka_drivers_core::StopReason::NONE)
+  {
+    UpdateStopReasonState();
+    return return_type::DEACTIVATE;
+  }
+
   // If control is not started or a request is missed, do not send back anything
   if (!runtime_state_.msg_received)
   {
     return return_type::OK;
   }
 
-  Write();
+  if (!Write())
+  {
+    if (LatchStopReason(kuka_drivers_core::StopReason::RSI_SEND_FAILED))
+    {
+      RCLCPP_ERROR(
+        logger_, "Stopping: sending the RSI command for IPOC %lu failed",
+        diagnostics_state_.last_ipoc);
+    }
+    // read() still runs while INACTIVE, so this reaches the event broadcaster same as a receive
+    // failure, and robot_manager gets told to deactivate JTC/JSB.
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    UpdateStopReasonState();
+    return return_type::DEACTIVATE;
+  }
 
   return return_type::OK;
+}
+
+bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
+{
+  auto expected = kuka_drivers_core::StopReason::NONE;
+  return event_state_.stop_reason.compare_exchange_strong(expected, reason);
+}
+
+void KukaRSIHardwareInterfaceBase::ResetStopReason()
+{
+  event_state_.stop_reason.store(kuka_drivers_core::StopReason::NONE);
+  UpdateStopReasonState();
+}
+
+void KukaRSIHardwareInterfaceBase::UpdateStopReasonState()
+{
+  event_state_.stop_reason_state =
+    static_cast<double>(static_cast<uint8_t>(event_state_.stop_reason.load()));
 }
 
 bool KukaRSIHardwareInterfaceBase::SetupRobot(
@@ -726,10 +785,20 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     std::fill(interface_data_.torque_commands.begin(), interface_data_.torque_commands.end(), 0.0);
   }
   CopyGPIOStatesToCommands();
-  Write();
+  if (!Write())
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "Activation failed: sending the first RSI command failed, cancelling the RSI program and "
+      "turning off the drives");
+    robot_ptr_->ResetControlSignal();
+    RequestStop();
+    return CallbackReturn::FAILURE;
+  }
 
   runtime_state_.msg_received = false;
   runtime_state_.is_active = true;
+  ResetStopReason();
 
   RCLCPP_INFO(
     logger_, "Received position data from robot controller %.0f ms after the start request",
@@ -875,7 +944,7 @@ void KukaRSIHardwareInterfaceBase::CheckStopComplete()
   }
 }
 
-void KukaRSIHardwareInterfaceBase::Write()
+bool KukaRSIHardwareInterfaceBase::Write()
 {
   // Write values to hardware interface
   auto & control_signal = robot_ptr_->GetControlSignal();
@@ -913,8 +982,9 @@ void KukaRSIHardwareInterfaceBase::Write()
   if (send_reply_status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Sending reply failed: %s", send_reply_status.message);
-    throw std::runtime_error("Error sending reply");
+    return false;
   }
+  return true;
 }
 
 void KukaRSIHardwareInterfaceBase::ResetDiagnostics()
@@ -977,7 +1047,8 @@ bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameters()
          ReadTimeoutParameter(
            "first_packet_timeout_ms", DEFAULT_FIRST_PACKET_TIMEOUT, first_packet_timeout_) &&
          ReadTimeoutParameter(
-           "stop_pending_timeout_ms", DEFAULT_STOP_PENDING_TIMEOUT, stop_pending_timeout_);
+           "stop_pending_timeout_ms", DEFAULT_STOP_PENDING_TIMEOUT, stop_pending_timeout_) &&
+         ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_);
 }
 
 bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameter(

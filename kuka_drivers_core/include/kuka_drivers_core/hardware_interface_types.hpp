@@ -52,6 +52,7 @@ static constexpr char EMERGENCY_STOP[] = "emergency_stop";
 static constexpr char GUARD_STOP[] = "guard_stop";
 static constexpr char IN_MOTION[] = "in_motion";
 static constexpr char MOTION_POSSIBLE[] = "motion_possible";
+static constexpr char STOP_REASON[] = "stop_reason";
 
 /* FRI state interfaces */
 static constexpr char SESSION_STATE[] = "session_state";

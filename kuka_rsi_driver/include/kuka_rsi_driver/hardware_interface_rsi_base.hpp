@@ -15,6 +15,7 @@
 #ifndef KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 #define KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -29,6 +30,7 @@
 #include "kuka/external-control-sdk/kss/configuration.h"
 #include "kuka/external-control-sdk/kss/rsi/robot_interface.h"
 #include "kuka_drivers_core/control_mode.hpp"
+#include "kuka_drivers_core/stop_reason.hpp"
 #include "kuka_rsi_driver/robot_status_manager.hpp"
 #include "kuka_rsi_driver/visibility_control.h"
 
@@ -72,6 +74,9 @@ public:
   KUKA_RSI_DRIVER_PUBLIC void set_server_event(kuka_drivers_core::HardwareEvent);
 
 protected:
+  // First cause wins; true when this call set it. write() returns DEACTIVATE while it is set.
+  KUKA_RSI_DRIVER_LOCAL bool LatchStopReason(kuka_drivers_core::StopReason reason);
+
   KUKA_RSI_DRIVER_LOCAL bool SetupRobot(
     kuka::external::control::kss::Configuration & config,
     std::unique_ptr<kuka::external::control::EventHandler> event_handler,
@@ -79,9 +84,16 @@ protected:
 
   virtual KUKA_RSI_DRIVER_LOCAL void Read(const int64_t request_timeout);
 
-  KUKA_RSI_DRIVER_LOCAL void Write();
+  // False when the send failed; the caller decides whether that stops the component.
+  KUKA_RSI_DRIVER_LOCAL bool Write();
 
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
+
+  // Clears the latch; only a successful activation may call it.
+  KUKA_RSI_DRIVER_LOCAL void ResetStopReason();
+
+  // Copies the latch into the exported state interface.
+  KUKA_RSI_DRIVER_LOCAL void UpdateStopReasonState();
 
   // Requests the RSI program cancel and drives-off without waiting, and marks the stop pending.
   KUKA_RSI_DRIVER_LOCAL void RequestStop();
@@ -148,6 +160,9 @@ protected:
     kuka_drivers_core::HardwareEvent last_event =
       kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED;
     std::mutex event_mutex;
+    // Held through INACTIVE, reset by a successful activation.
+    std::atomic<kuka_drivers_core::StopReason> stop_reason{kuka_drivers_core::StopReason::NONE};
+    double stop_reason_state = 0.0;
   };
 
   struct RuntimeState
@@ -194,7 +209,6 @@ protected:
   static constexpr std::chrono::milliseconds IDLE_SLEEP_DURATION{2};
   static constexpr std::chrono::milliseconds INIT_WAIT_DURATION{100};
   static constexpr std::chrono::milliseconds DRIVES_POWERED_CHECK_INTERVAL{100};
-  static constexpr int64_t READ_TIMEOUT_MS = 1'000;
 
   // Bound on the wait for a pending cancel before on_cleanup releases the client.
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
@@ -205,10 +219,12 @@ protected:
   static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{3'000};
   static constexpr std::chrono::milliseconds DEFAULT_FIRST_PACKET_TIMEOUT{5'000};
   static constexpr std::chrono::milliseconds DEFAULT_STOP_PENDING_TIMEOUT{3'000};
+  static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT{12};
   std::chrono::milliseconds configure_timeout_{DEFAULT_CONFIGURE_TIMEOUT};
   std::chrono::milliseconds drives_on_timeout_{DEFAULT_DRIVES_ON_TIMEOUT};
   std::chrono::milliseconds first_packet_timeout_{DEFAULT_FIRST_PACKET_TIMEOUT};
   std::chrono::milliseconds stop_pending_timeout_{DEFAULT_STOP_PENDING_TIMEOUT};
+  std::chrono::milliseconds read_timeout_{DEFAULT_READ_TIMEOUT};
 
   // Fixed cycle time and control mode for this driver version.
   static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;
