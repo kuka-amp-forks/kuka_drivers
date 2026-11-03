@@ -29,6 +29,9 @@ env:
   DESC_REPO: https://github.com/kuka-amp-forks/kuka_robot_descriptions.git
   DESC_REF: d8b41feab96dad453b188a4d192ab95736d473eb
   RMW_IMPLEMENTATION: rmw_zenoh_cpp
+  # From ros2-testing for the Zenoh freeze fix; drop once the snapshot carries 0.10.7.
+  ZENOH_PKG_VERSION: "0.10.7-1resolute.20261024.194644"
+  ZENOH_VENDOR_PKG_VERSION: "0.10.7-1resolute.20261024.164443"
 
 jobs:
   build_test:
@@ -51,6 +54,15 @@ jobs:
           rm -f /etc/apt/sources.list.d/ros2*.list /etc/apt/sources.list.d/ros2*.sources
           echo "deb [trusted=yes] http://snapshots.ros.org/${ROS_DISTRO}/${ROS_APT_SNAPSHOT_DATE}/ubuntu ${UBUNTU_CODENAME} main" \
             > /etc/apt/sources.list.d/ros2-snapshot.list
+          # Testing at low priority, so only the two pinned packages come from it.
+          echo "deb [trusted=yes] http://packages.ros.org/ros2-testing/ubuntu ${UBUNTU_CODENAME} main" \
+            > /etc/apt/sources.list.d/ros2-testing.list
+          # Match by host, not Release Origin, which testing shares with the snapshot.
+          cat > /etc/apt/preferences.d/ros2-testing <<'EOF'
+          Package: *
+          Pin: origin "packages.ros.org"
+          Pin-Priority: 1
+          EOF
           apt-get update -qq
           ros_pkgs=$(apt list --upgradable 2>/dev/null | grep -oP "^ros-${ROS_DISTRO}-[^/]+" || true)
           if [ -n "${ros_pkgs}" ]; then
@@ -59,7 +71,18 @@ jobs:
           fi
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             git python3-vcstool python3-colcon-common-extensions python3-rosdep \
-            ros-${ROS_DISTRO}-rmw-zenoh-cpp
+            "ros-${ROS_DISTRO}-zenoh-cpp-vendor=${ZENOH_VENDOR_PKG_VERSION}" \
+            "ros-${ROS_DISTRO}-rmw-zenoh-cpp=${ZENOH_PKG_VERSION}"
+
+      - name: Verify the pinned rmw_zenoh_cpp versions
+        run: |
+          set -euo pipefail
+          installed_zenoh=$(dpkg-query -W -f='${Version}' "ros-${ROS_DISTRO}-rmw-zenoh-cpp")
+          installed_vendor=$(dpkg-query -W -f='${Version}' "ros-${ROS_DISTRO}-zenoh-cpp-vendor")
+          echo "ros-${ROS_DISTRO}-rmw-zenoh-cpp: ${installed_zenoh} (expected ${ZENOH_PKG_VERSION})"
+          echo "ros-${ROS_DISTRO}-zenoh-cpp-vendor: ${installed_vendor} (expected ${ZENOH_VENDOR_PKG_VERSION})"
+          [ "${installed_zenoh}" = "${ZENOH_PKG_VERSION}" ]
+          [ "${installed_vendor}" = "${ZENOH_VENDOR_PKG_VERSION}" ]
 
       - name: Fetch the SDK and the robot descriptions at their pins
         run: |
@@ -81,6 +104,21 @@ jobs:
           dpkg-query -W -f='${Package} ${Version}\n' \
             ros-${ROS_DISTRO}-controller-manager ros-${ROS_DISTRO}-hardware-interface \
             ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-rmw-zenoh-cpp
+          # Fail if any unpinned installed version isn't also in the snapshot.
+          allowed="ros-${ROS_DISTRO}-rmw-zenoh-cpp ros-${ROS_DISTRO}-zenoh-cpp-vendor"
+          leaked=""
+          for pkg in $(dpkg-query -W -f='${db:Status-Status} ${Package}\n' "ros-${ROS_DISTRO}-*" 2>/dev/null \
+              | awk '$1=="installed"{print $2}'); do
+            case " ${allowed} " in *" ${pkg} "*) continue ;; esac
+            ver=$(dpkg-query -W -f='${Version}' "${pkg}")
+            if ! apt-cache madison "${pkg}" | awk -v v="${ver}" -F' \\| ' '$2==v' | grep -q snapshots.ros.org; then
+              leaked="${leaked} ${pkg}=${ver}"
+            fi
+          done
+          if [ -n "${leaked}" ]; then
+            echo "Packages installed from ros2-testing beyond the pinned two:${leaked}" >&2
+            exit 1
+          fi
 
       - name: colcon build
         run: |
