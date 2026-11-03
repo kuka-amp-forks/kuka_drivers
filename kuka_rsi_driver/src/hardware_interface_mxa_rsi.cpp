@@ -53,14 +53,16 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_init(
   return CallbackReturn::SUCCESS;
 }
 
-std::vector<hardware_interface::StateInterface>
-KukaMxaRsiHardwareInterface::export_state_interfaces()
+std::vector<hardware_interface::StateInterface::ConstSharedPtr>
+KukaMxaRsiHardwareInterface::on_export_state_interfaces()
 {
-  std::vector<hardware_interface::StateInterface> state_interfaces;
+  auto state_interfaces = KukaRSIHardwareInterfaceBase::on_export_state_interfaces();
 
-  state_interfaces = KukaRSIHardwareInterfaceBase::export_state_interfaces();
-
-  control_state_.status_manager.RegisterStateInterfaces(state_interfaces, interface_prefix_);
+  for (const auto & [name, value] : control_state_.status_manager.StateInterfaceValues())
+  {
+    ExportState(
+      state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX, name, value);
+  }
 
   return state_interfaces;
 }

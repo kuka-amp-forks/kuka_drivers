@@ -14,6 +14,8 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <tuple>
 #include <vector>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -201,64 +203,110 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
   return CallbackReturn::SUCCESS;
 }
 
-std::vector<hardware_interface::StateInterface>
-KukaRSIHardwareInterfaceBase::export_state_interfaces()
+std::vector<hardware_interface::StateInterface::ConstSharedPtr>
+KukaRSIHardwareInterfaceBase::on_export_state_interfaces()
 {
-  std::vector<hardware_interface::StateInterface> state_interfaces;
+  std::vector<hardware_interface::StateInterface::ConstSharedPtr> state_interfaces;
   for (size_t i = 0; i < info_.joints.size(); i++)
   {
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION,
+    ExportState(
+      state_interfaces, info_.joints[i].name, hardware_interface::HW_IF_POSITION,
       &interface_data_.position_states[i]);
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
+    ExportState(
+      state_interfaces, info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
       &interface_data_.velocity_states[i]);
-    state_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &interface_data_.torque_states[i]);
+    ExportState(
+      state_interfaces, info_.joints[i].name, hardware_interface::HW_IF_EFFORT,
+      &interface_data_.torque_states[i]);
   }
 
   for (size_t i = 0; i < info_.gpios[0].state_interfaces.size(); i++)
   {
-    state_interfaces.emplace_back(
-      hardware_interface::IO_PREFIX, info_.gpios[0].state_interfaces[i].name,
+    ExportState(
+      state_interfaces, hardware_interface::IO_PREFIX, info_.gpios[0].state_interfaces[i].name,
       &interface_data_.gpio_states[i]);
   }
 
-  state_interfaces.emplace_back(
-    interface_prefix_ + hardware_interface::STATE_PREFIX, hardware_interface::SERVER_STATE,
-    &event_state_.server_state);
-  state_interfaces.emplace_back(
-    interface_prefix_ + hardware_interface::STATE_PREFIX, hardware_interface::STOP_REASON,
-    &event_state_.stop_reason_state);
+  ExportState(
+    state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX,
+    hardware_interface::SERVER_STATE, &event_state_.server_state);
+  ExportState(
+    state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX,
+    hardware_interface::STOP_REASON, &event_state_.stop_reason_state);
 
   return state_interfaces;
 }
 
-std::vector<hardware_interface::CommandInterface>
-KukaRSIHardwareInterfaceBase::export_command_interfaces()
+std::vector<hardware_interface::CommandInterface::SharedPtr>
+KukaRSIHardwareInterfaceBase::on_export_command_interfaces()
 {
   RCLCPP_INFO(logger_, "Exporting command interfaces");
-  std::vector<hardware_interface::CommandInterface> command_interfaces;
+  std::vector<hardware_interface::CommandInterface::SharedPtr> command_interfaces;
   for (size_t i = 0; i < info_.joints.size(); i++)
   {
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_POSITION,
+    ExportCommand(
+      command_interfaces, info_.joints[i].name, hardware_interface::HW_IF_POSITION,
       &interface_data_.position_commands[i]);
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
+    ExportCommand(
+      command_interfaces, info_.joints[i].name, hardware_interface::HW_IF_VELOCITY,
       &interface_data_.velocity_commands[i]);
-    command_interfaces.emplace_back(
-      info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &interface_data_.torque_commands[i]);
+    ExportCommand(
+      command_interfaces, info_.joints[i].name, hardware_interface::HW_IF_EFFORT,
+      &interface_data_.torque_commands[i]);
   }
 
   for (size_t i = 0; i < info_.gpios[0].command_interfaces.size(); i++)
   {
-    command_interfaces.emplace_back(
-      hardware_interface::IO_PREFIX, info_.gpios[0].command_interfaces[i].name,
+    ExportCommand(
+      command_interfaces, hardware_interface::IO_PREFIX, info_.gpios[0].command_interfaces[i].name,
       &interface_data_.gpio_commands[i]);
   }
 
   return command_interfaces;
+}
+
+void KukaRSIHardwareInterfaceBase::ExportState(
+  std::vector<hardware_interface::StateInterface::ConstSharedPtr> & state_interfaces,
+  const std::string & prefix, const std::string & name, const double * value)
+{
+  auto state_interface = std::make_shared<hardware_interface::StateInterface>(prefix, name);
+  std::ignore = state_interface->set_value(*value, true);
+  exported_states_.emplace_back(state_interface, value);
+  state_interfaces.push_back(state_interface);
+}
+
+void KukaRSIHardwareInterfaceBase::ExportCommand(
+  std::vector<hardware_interface::CommandInterface::SharedPtr> & command_interfaces,
+  const std::string & prefix, const std::string & name, double * value)
+{
+  auto command_interface = std::make_shared<hardware_interface::CommandInterface>(prefix, name);
+  std::ignore = command_interface->set_value(*value, true);
+  exported_commands_.emplace_back(command_interface, value);
+  command_interfaces.push_back(command_interface);
+}
+
+void KukaRSIHardwareInterfaceBase::PublishStates(bool wait_for_lock)
+{
+  for (const auto & [state_interface, value] : exported_states_)
+  {
+    std::ignore = state_interface->set_value(*value, wait_for_lock);
+  }
+}
+
+void KukaRSIHardwareInterfaceBase::PublishCommands()
+{
+  for (const auto & [command_interface, value] : exported_commands_)
+  {
+    std::ignore = command_interface->set_value(*value, true);
+  }
+}
+
+void KukaRSIHardwareInterfaceBase::FetchCommands()
+{
+  for (const auto & [command_interface, value] : exported_commands_)
+  {
+    std::ignore = command_interface->get_value(*value, false);
+  }
 }
 
 CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::State &)
@@ -318,6 +366,7 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     {
       CheckStopComplete();
     }
+    PublishStates(false);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     return return_type::OK;
   }
@@ -331,6 +380,7 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
       logger_, "Stopping: no RSI packet within %ld ms of the last one, IPOC %lu",
       static_cast<int64_t>(read_timeout_.count()), diagnostics_state_.last_ipoc);
   }
+  PublishStates(false);
   return return_type::OK;
 }
 
@@ -349,6 +399,7 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
     return return_type::OK;
   }
 
+  FetchCommands();
   if (!Write())
   {
     if (LatchStopReason(kuka_drivers_core::StopReason::RSI_SEND_FAILED))
@@ -883,6 +934,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
 
   runtime_state_.msg_received = false;
   ResetStopReason();
+  PublishStates(true);
+  PublishCommands();
   runtime_state_.is_active.store(true, std::memory_order_release);
 
   RCLCPP_INFO(
