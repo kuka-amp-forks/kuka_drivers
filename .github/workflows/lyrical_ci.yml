@@ -29,9 +29,8 @@ env:
   DESC_REPO: https://github.com/kuka-amp-forks/kuka_robot_descriptions.git
   DESC_REF: d8b41feab96dad453b188a4d192ab95736d473eb
   RMW_IMPLEMENTATION: rmw_zenoh_cpp
-  # From ros2-testing for the Zenoh freeze fix; drop once the snapshot carries 0.10.7 or later.
-  ZENOH_PKG_VERSION: "0.10.8-1resolute.20261103.161410"
-  ZENOH_VENDOR_PKG_VERSION: "0.10.8-1resolute.20261103.145446"
+  # Floor for the Zenoh freeze fix; drop ros2-testing once a dated snapshot carries 0.10.7 or later.
+  ZENOH_MIN_VERSION: "0.10.7"
 
 jobs:
   build_test:
@@ -54,11 +53,15 @@ jobs:
           rm -f /etc/apt/sources.list.d/ros2*.list /etc/apt/sources.list.d/ros2*.sources
           echo "deb [trusted=yes] http://snapshots.ros.org/${ROS_DISTRO}/${ROS_APT_SNAPSHOT_DATE}/ubuntu ${UBUNTU_CODENAME} main" \
             > /etc/apt/sources.list.d/ros2-snapshot.list
-          # Testing at low priority, so only the two pinned packages come from it.
+          # Testing at low priority except the two Zenoh packages, which outrank the snapshot.
           echo "deb [trusted=yes] http://packages.ros.org/ros2-testing/ubuntu ${UBUNTU_CODENAME} main" \
             > /etc/apt/sources.list.d/ros2-testing.list
           # Match by host, not Release Origin, which testing shares with the snapshot.
-          cat > /etc/apt/preferences.d/ros2-testing <<'EOF'
+          cat > /etc/apt/preferences.d/ros2-testing <<EOF
+          Package: ros-${ROS_DISTRO}-rmw-zenoh-cpp ros-${ROS_DISTRO}-zenoh-cpp-vendor
+          Pin: origin "packages.ros.org"
+          Pin-Priority: 600
+
           Package: *
           Pin: origin "packages.ros.org"
           Pin-Priority: 1
@@ -71,18 +74,23 @@ jobs:
           fi
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             git python3-vcstool python3-colcon-common-extensions python3-rosdep \
-            "ros-${ROS_DISTRO}-zenoh-cpp-vendor=${ZENOH_VENDOR_PKG_VERSION}" \
-            "ros-${ROS_DISTRO}-rmw-zenoh-cpp=${ZENOH_PKG_VERSION}"
+            "ros-${ROS_DISTRO}-zenoh-cpp-vendor" "ros-${ROS_DISTRO}-rmw-zenoh-cpp"
+          # Hold them so rosdep cannot swap in the snapshot's build.
+          apt-mark hold "ros-${ROS_DISTRO}-zenoh-cpp-vendor" "ros-${ROS_DISTRO}-rmw-zenoh-cpp"
 
-      - name: Verify the pinned rmw_zenoh_cpp versions
+      - name: Check the rmw_zenoh_cpp version floor
         run: |
           set -euo pipefail
-          installed_zenoh=$(dpkg-query -W -f='${Version}' "ros-${ROS_DISTRO}-rmw-zenoh-cpp")
-          installed_vendor=$(dpkg-query -W -f='${Version}' "ros-${ROS_DISTRO}-zenoh-cpp-vendor")
-          echo "ros-${ROS_DISTRO}-rmw-zenoh-cpp: ${installed_zenoh} (expected ${ZENOH_PKG_VERSION})"
-          echo "ros-${ROS_DISTRO}-zenoh-cpp-vendor: ${installed_vendor} (expected ${ZENOH_VENDOR_PKG_VERSION})"
-          [ "${installed_zenoh}" = "${ZENOH_PKG_VERSION}" ]
-          [ "${installed_vendor}" = "${ZENOH_VENDOR_PKG_VERSION}" ]
+          low=""
+          for pkg in "ros-${ROS_DISTRO}-rmw-zenoh-cpp" "ros-${ROS_DISTRO}-zenoh-cpp-vendor"; do
+            ver=$(dpkg-query -W -f='${Version}' "${pkg}")
+            echo "${pkg} ${ver}"
+            dpkg --compare-versions "${ver}" ge "${ZENOH_MIN_VERSION}" || low="${low} ${pkg}=${ver}"
+          done
+          if [ -n "${low}" ]; then
+            echo "Below the ${ZENOH_MIN_VERSION} floor:${low}" >&2
+            exit 1
+          fi
 
       - name: Fetch the SDK and the robot descriptions at their pins
         run: |
@@ -103,7 +111,8 @@ jobs:
           rosdep install --from-paths ws/src --ignore-src -y --rosdistro "${ROS_DISTRO}"
           dpkg-query -W -f='${Package} ${Version}\n' \
             ros-${ROS_DISTRO}-controller-manager ros-${ROS_DISTRO}-hardware-interface \
-            ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-rmw-zenoh-cpp
+            ros-${ROS_DISTRO}-joint-trajectory-controller ros-${ROS_DISTRO}-rmw-zenoh-cpp \
+            ros-${ROS_DISTRO}-zenoh-cpp-vendor
           # Fail if any unpinned installed version isn't also in the snapshot.
           allowed="ros-${ROS_DISTRO}-rmw-zenoh-cpp ros-${ROS_DISTRO}-zenoh-cpp-vendor"
           leaked=""
