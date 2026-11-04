@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "hardware_interface/system_interface.hpp"
@@ -58,10 +59,12 @@ public:
     const hardware_interface::HardwareComponentInterfaceParams & params) override;
 
   KUKA_RSI_DRIVER_PUBLIC
-  std::vector<hardware_interface::StateInterface> export_state_interfaces() override;
+  std::vector<hardware_interface::StateInterface::ConstSharedPtr> on_export_state_interfaces()
+    override;
 
   KUKA_RSI_DRIVER_PUBLIC
-  std::vector<hardware_interface::CommandInterface> export_command_interfaces() override;
+  std::vector<hardware_interface::CommandInterface::SharedPtr> on_export_command_interfaces()
+    override;
 
   KUKA_RSI_DRIVER_PUBLIC CallbackReturn on_cleanup(const rclcpp_lifecycle::State &) override;
 
@@ -114,6 +117,23 @@ protected:
 
   // Copies the latch into the exported state interface.
   KUKA_RSI_DRIVER_LOCAL void UpdateStopReasonState();
+
+  // Exports a state interface that mirrors value.
+  KUKA_RSI_DRIVER_LOCAL void ExportState(
+    std::vector<hardware_interface::StateInterface::ConstSharedPtr> & state_interfaces,
+    const std::string & prefix, const std::string & name, const double * value);
+
+  KUKA_RSI_DRIVER_LOCAL void ExportCommand(
+    std::vector<hardware_interface::CommandInterface::SharedPtr> & command_interfaces,
+    const std::string & prefix, const std::string & name, double * value);
+
+  // Copies the states into the exported interfaces; without wait_for_lock a busy one is skipped.
+  KUKA_RSI_DRIVER_LOCAL void PublishStates(bool wait_for_lock);
+
+  KUKA_RSI_DRIVER_LOCAL void PublishCommands();
+
+  // Takes the controllers' commands; a busy interface keeps the last one.
+  KUKA_RSI_DRIVER_LOCAL void FetchCommands();
 
   // Requests the RSI program cancel and drives-off without waiting, and marks the stop pending.
   KUKA_RSI_DRIVER_LOCAL void RequestStop();
@@ -225,6 +245,11 @@ protected:
   std::unique_ptr<kuka::external::control::kss::rsi::Robot> robot_ptr_;
 
   InterfaceData interface_data_;
+  // The exported interfaces own their values; each is paired with the value it mirrors.
+  std::vector<std::pair<hardware_interface::StateInterface::SharedPtr, const double *>>
+    exported_states_;
+  std::vector<std::pair<hardware_interface::CommandInterface::SharedPtr, double *>>
+    exported_commands_;
   OptionalInterfaceFlags optional_interface_flags_;
   EventState event_state_;
   RuntimeState runtime_state_;

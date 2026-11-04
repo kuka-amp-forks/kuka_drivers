@@ -86,6 +86,8 @@ CallbackReturn KukaRSIHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
   runtime_state_.msg_received = false;
   runtime_state_.is_active.store(true, std::memory_order_relaxed);
   ResetStopReason();
+  PublishStates(true);
+  PublishCommands();
 
   RCLCPP_INFO(logger_, "Received position data from robot controller!");
   set_server_event(kuka_drivers_core::HardwareEvent::CONTROL_STARTED);

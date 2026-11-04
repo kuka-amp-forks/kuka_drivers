@@ -49,11 +49,10 @@ public:
     return *this;
   }
 
-  void RegisterStateInterfaces(
-    std::vector<hardware_interface::StateInterface> & state_interfaces,
-    const std::string & interface_prefix)
+  // The value behind each exported status state interface, by interface name.
+  std::vector<std::pair<std::string, const double *>> StateInterfaceValues() const
   {
-    const std::vector<std::pair<std::string, double *>> interface_data = {
+    return {
       {hardware_interface::CONTROL_MODE, &control_mode_},
       {hardware_interface::CYCLE_TIME, &cycle_time_},
       {hardware_interface::DRIVES_POWERED, &drives_powered_},
@@ -63,12 +62,6 @@ public:
       {hardware_interface::MOTION_POSSIBLE, &motion_possible_},
       {hardware_interface::OPERATION_MODE, &operation_mode_},
       {hardware_interface::ROBOT_STOPPED, &robot_stopped_}};
-
-    for (const auto & [name, value_ptr] : interface_data)
-    {
-      state_interfaces.emplace_back(
-        interface_prefix + hardware_interface::STATE_PREFIX, name, value_ptr);
-    }
   }
 
   bool IsOperationModeExt()
@@ -109,11 +102,9 @@ private:
 class StatusManager
 {
 public:
-  void RegisterStateInterfaces(
-    std::vector<hardware_interface::StateInterface> & state_interfaces,
-    const std::string & interface_prefix)
+  std::vector<std::pair<std::string, const double *>> StateInterfaceValues() const
   {
-    status_interfaces_.RegisterStateInterfaces(state_interfaces, interface_prefix);
+    return status_interfaces_.StateInterfaceValues();
   }
 
   void SetStatusInterfaces(const kuka::external::control::kss::StatusUpdate & update)
