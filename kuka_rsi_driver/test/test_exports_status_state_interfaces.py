@@ -36,7 +36,7 @@ from rsi_fault_support import (  # noqa: E402
     fault_launch_description,
 )
 
-# The nine mxA flags the status manager exports, plus the drive fault.
+# The flags the status manager exports, plus the drive fault.
 STATUS_INTERFACES = (
     "control_mode",
     "cycle_time",
@@ -48,6 +48,8 @@ STATUS_INTERFACES = (
     "operation_mode",
     "robot_stopped",
     "drive_fault",
+    "brake_test_due",
+    "brake_test_warning",
 )
 # The SDK's error text for mxA error 801; the fake delivers '+' as a space.
 STOP_MESSAGE_ERROR = "STOPMESS+active"
