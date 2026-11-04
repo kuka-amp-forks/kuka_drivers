@@ -363,6 +363,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::St
   }
   runtime_state_.is_active.store(false, std::memory_order_relaxed);
   runtime_state_.msg_received = false;
+  runtime_state_.packet_unanswered = false;
   runtime_state_.stop_pending = false;
   runtime_state_.cancel_confirmed = false;
   robot_ptr_.reset();
@@ -657,6 +658,7 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
     motion_state_status.return_code == kuka::external::control::ReturnCode::OK;
   if (runtime_state_.msg_received)
   {
+    runtime_state_.packet_unanswered = true;
     // record timestamp immediately after the motion state is received
     auto now = std::chrono::steady_clock::now();
 
@@ -1029,12 +1031,27 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
 
   const uint64_t entry_ipoc = diagnostics_state_.last_ipoc;
   bool stop_sent = false;
-  if (runtime_state_.msg_received)
+  bool packet_to_answer = runtime_state_.msg_received;
+  if (packet_to_answer && !runtime_state_.packet_unanswered)
+  {
+    // A commanded deactivate finds the last packet answered, so the stop flag goes on the next
+    // one, waited for as long as read() would and never less than the SDK's own bound; the SDK's
+    // StopControlling() alone would wait its 40 ms, one cycle of the simulator.
+    const auto bound = std::max(read_timeout_, SDK_RSI_STOP_RECEIVE_TIMEOUT);
+    packet_to_answer = robot_ptr_->ReceiveMotionState(bound).return_code == ReturnCode::OK;
+    if (!packet_to_answer)
+    {
+      RCLCPP_WARN(
+        logger_, "No RSI packet within %ld ms to answer with the stop flag",
+        static_cast<int64_t>(bound.count()));
+    }
+  }
+  if (packet_to_answer)
   {
     RCLCPP_INFO(logger_, "Deactivating hardware interface by sending stop signal");
 
-    // The plain RSI stop answers the pending or next RSI packet with the stop flag. The mxA
-    // override would follow it with the blocking cancel.
+    // The plain RSI stop answers the pending RSI packet with the stop flag. The mxA override
+    // would follow it with the blocking cancel.
     const auto stop_status =
       robot_ptr_->kuka::external::control::kss::rsi::Robot::StopControlling();
     stop_sent = stop_status.return_code == ReturnCode::OK;
@@ -1058,6 +1075,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
   }
   const auto stop_time = std::chrono::steady_clock::now();
   runtime_state_.msg_received = false;
+  runtime_state_.packet_unanswered = false;
 
   RequestStop();
 
@@ -1199,6 +1217,7 @@ bool KukaRSIHardwareInterfaceBase::Write()
     RCLCPP_ERROR(logger_, "Sending reply failed: %s", send_reply_status.message);
     return false;
   }
+  runtime_state_.packet_unanswered = false;
   return true;
 }
 

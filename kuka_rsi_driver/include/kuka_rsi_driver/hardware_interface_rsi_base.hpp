@@ -266,6 +266,9 @@ protected:
     // Read by the mxA status thread, written by the lifecycle thread.
     std::atomic<bool> is_active{false};
     bool msg_received = false;
+    // Set by Read() on a packet, cleared by Write() once it is answered; a commanded deactivate
+    // finds it clear and puts the stop flag on the next packet, a fault's on the pending one.
+    bool packet_unanswered = false;
     // Set by on_deactivate, cleared by read() once the cancel is confirmed and the drives are off.
     // Read by the mxA status thread: a guard stop inside this window is the stop's own doing.
     std::atomic<bool> stop_pending{false};
@@ -339,6 +342,11 @@ protected:
 
   // The SDK's error text for mxA error 801 (mxa/client.cc); keep in sync.
   static constexpr const char * STOP_MESSAGE_ERROR_TEXT = "STOPMESS active";
+
+  // Mirrors kuka::external::control::kss::rsi::Robot::kStopReceiveTimeoutMs
+  // (rsi/robot_interface.h), how long the SDK's StopControlling() waits for the packet it answers;
+  // keep in sync.
+  static constexpr std::chrono::milliseconds SDK_RSI_STOP_RECEIVE_TIMEOUT{40};
 
   // Interface prefix for state and command interfaces, enabling multi-robot support
   std::string interface_prefix_;
