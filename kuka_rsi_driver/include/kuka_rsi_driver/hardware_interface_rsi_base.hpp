@@ -78,7 +78,8 @@ public:
 
   KUKA_RSI_DRIVER_PUBLIC void set_server_event(kuka_drivers_core::HardwareEvent);
 
-  // Latches an SDK stop or error event while active; called on the SDK's event thread.
+  // Latches an SDK stop or error event while active, and the KRC's stop message (mxA error 801)
+  // in any state; called on the SDK's event thread.
   KUKA_RSI_DRIVER_PUBLIC void OnControlEvent(
     kuka_drivers_core::StopReason reason, const std::string & detail);
 
@@ -112,11 +113,13 @@ protected:
 
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
 
-  // Clears the latch; only a successful activation may call it.
+  // Clears the stop and drive-fault latches; only a successful activation may call it.
   KUKA_RSI_DRIVER_LOCAL void ResetStopReason();
 
   // Copies the latch into the exported state interface.
   KUKA_RSI_DRIVER_LOCAL void UpdateStopReasonState();
+
+  KUKA_RSI_DRIVER_LOCAL void UpdateDriveFaultState();
 
   // Exports a state interface that mirrors value.
   KUKA_RSI_DRIVER_LOCAL void ExportState(
@@ -206,6 +209,10 @@ protected:
     // Held through INACTIVE, reset by a successful activation.
     std::atomic<kuka_drivers_core::StopReason> stop_reason{kuka_drivers_core::StopReason::NONE};
     double stop_reason_state = 0.0;
+    // The KRC's stop message, set from the SDK's error event; the SDK reports no release, so it
+    // holds until a successful activation, which the KRC refuses while the message stands.
+    std::atomic<bool> drive_fault{false};
+    double drive_fault_state = 0.0;
   };
 
   struct RuntimeState
@@ -284,6 +291,9 @@ protected:
 
   // threshold for logging slow RSI responses
   static constexpr std::chrono::milliseconds kWarningThreshold{2};
+
+  // The SDK's error text for mxA error 801 (mxa/client.cc); keep in sync.
+  static constexpr const char * STOP_MESSAGE_ERROR_TEXT = "STOPMESS active";
 
   // Interface prefix for state and command interfaces, enabling multi-robot support
   std::string interface_prefix_;

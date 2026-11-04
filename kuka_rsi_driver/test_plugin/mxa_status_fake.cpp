@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <sstream>
@@ -319,13 +320,15 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
 
   if (key == "error" || key == "stopped")
   {
+    std::string text = value;
+    std::replace(text.begin(), text.end(), '+', ' ');
     if (event_handler_ && key == "error")
     {
-      event_handler_->OnError(value);
+      event_handler_->OnError(text);
     }
     else if (event_handler_)
     {
-      event_handler_->OnStopped(value);
+      event_handler_->OnStopped(text);
     }
     return true;
   }

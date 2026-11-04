@@ -206,6 +206,7 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
     def setUp(self):
         super().setUp()
         self.stop_reason_value = None
+        self.state_values = {}
         self.hardware_events = []
         self.state_ipocs = []
         self.commands = []
@@ -236,8 +237,10 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
 
     def _on_gpio_states(self, msg):
         for group, values in zip(msg.interface_groups, msg.interface_values):
-            if group == "state" and "stop_reason" in values.interface_names:
-                self.stop_reason_value = values.values[values.interface_names.index("stop_reason")]
+            if group == "state":
+                self.state_values = dict(zip(values.interface_names, values.values))
+                if "stop_reason" in self.state_values:
+                    self.stop_reason_value = self.state_values["stop_reason"]
 
     def stop_reason(self):
         self.stop_reason_value = None
@@ -246,6 +249,15 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
             "no stop_reason published",
         )
         return self.stop_reason_value
+
+    def state_value(self, name):
+        """Return the next published value of the state/<name> interface."""
+        self.state_values = {}
+        self.assertTrue(
+            self._spin_until(lambda: name in self.state_values, timeout=5),
+            f"no state/{name} published",
+        )
+        return self.state_values[name]
 
     def controller_state(self, name):
         result = self._call(

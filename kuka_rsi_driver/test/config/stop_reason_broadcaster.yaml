@@ -1,4 +1,4 @@
-# Test-only: publishes the driver's state/stop_reason interface, which the Lyrical
+# Test-only: publishes the driver's state/* interfaces, which the Lyrical
 # joint_state_broadcaster does not. A state-only gpio_controllers/GpioCommandController.
 /**/stop_reason_broadcaster:
   ros__parameters:
@@ -8,3 +8,11 @@
       state:
         interfaces:
           - stop_reason
+          - drive_fault
+          - emergency_stop
+          - guard_stop
+          - drives_powered
+          - motion_possible
+          - in_motion
+          - robot_stopped
+          - operation_mode
