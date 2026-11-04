@@ -1,0 +1,37 @@
+# Test-only: publishes the driver's state/* interfaces and the six inhibitor slots, which the
+# Lyrical joint_state_broadcaster does not. A state-only gpio_controllers/GpioCommandController.
+/**/inhibitor_broadcaster:
+  ros__parameters:
+    gpios:
+      - state
+      - inhibitor/estop
+      - inhibitor/guard
+      - inhibitor/mode
+      - inhibitor/drive_fault
+      - inhibitor/brake_test
+      - inhibitor/rsi
+    state_interfaces:
+      state:
+        interfaces:
+          - drive_fault
+          - brake_test_due
+          - brake_test_warning
+          - emergency_stop
+          - guard_stop
+          - drives_powered
+          - motion_possible
+          - in_motion
+          - robot_stopped
+          - operation_mode
+      inhibitor/estop:
+        interfaces: [active, latched, operator_action]
+      inhibitor/guard:
+        interfaces: [active, latched, operator_action]
+      inhibitor/mode:
+        interfaces: [active, latched, operator_action]
+      inhibitor/drive_fault:
+        interfaces: [active, latched, operator_action]
+      inhibitor/brake_test:
+        interfaces: [active, latched, operator_action]
+      inhibitor/rsi:
+        interfaces: [active, latched, operator_action]

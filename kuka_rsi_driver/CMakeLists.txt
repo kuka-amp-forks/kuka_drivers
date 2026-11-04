@@ -121,7 +121,7 @@ if(BUILD_TESTING)
   add_launch_test(test/test_deactivates_on_send_failure.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_no_command_after_latch.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_faults_on_read_timeout.py ${TEST_PLUGIN_ENV})
-  add_launch_test(test/test_stop_reason_held_until_activate.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_inhibitor_latched_until_activate.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_mxa_status_deactivates.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_mxa_loss.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_receive_stall_does_not_error.py ${TEST_PLUGIN_ENV})
@@ -132,10 +132,15 @@ if(BUILD_TESTING)
   add_launch_test(test/test_refuses_unsupported_mode_switch.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_exports_status_state_interfaces.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_exports_brake_test_status.py ${TEST_PLUGIN_ENV})
+  add_launch_test(test/test_inhibitor_slots.py ${TEST_PLUGIN_ENV})
   add_launch_test(test/test_exports_no_runtime_config.py
     TARGET test_exports_no_runtime_config_mxa_rsi ARGS "driver_version:=mxa_rsi")
   add_launch_test(test/test_exports_no_runtime_config.py
     TARGET test_exports_no_runtime_config_eki_rsi ARGS "driver_version:=eki_rsi")
+  add_launch_test(test/test_exports_inhibitor_slots.py
+    TARGET test_exports_inhibitor_slots_mxa_rsi ARGS "driver_version:=mxa_rsi")
+  add_launch_test(test/test_exports_inhibitor_slots.py
+    TARGET test_exports_inhibitor_slots_eki_rsi ARGS "driver_version:=eki_rsi")
 endif()
 
 ## EXPORTS

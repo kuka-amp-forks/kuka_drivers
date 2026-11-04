@@ -63,6 +63,7 @@ KukaMxaRsiHardwareInterface::on_export_state_interfaces()
     ExportState(
       state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX, name, value);
   }
+  ExportInhibitorSlots(state_interfaces);
 
   return state_interfaces;
 }
@@ -160,7 +161,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_deactivate(const rclcpp_lifecycle
 CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::State & state)
 {
   RCLCPP_ERROR(
-    logger_, "Releasing the mxA client, stop_reason reads '%s'; configure again to reconnect",
+    logger_, "Releasing the mxA client, the stop cause is '%s'; configure again to reconnect",
     kuka_drivers_core::StopReasonName(event_state_.stop_reason.load()));
   return KukaRSIHardwareInterfaceBase::on_error(state);
 }
@@ -194,7 +195,6 @@ return_type KukaMxaRsiHardwareInterface::read(
     }
     if (mxa_loss_exported_)
     {
-      UpdateStopReasonState();
       return return_type::ERROR;
     }
     // Export the error for one cycle so the event broadcaster publishes it before ERROR.
@@ -261,14 +261,12 @@ bool KukaMxaRsiHardwareInterface::LatchStatusStop()
   return true;
 }
 
-// E-stop/guard stop are faults in any state; drives/motion/EXT stay ACTIVE-only (LatchStatusStop).
-// While active, LatchStatusStop (called from read()) already covers e-stop/guard stop with the
-// full status and IPOC in the log; this only fills the gap for every other state.
+// While active, LatchStatusStop (called from read()) stops the component on e-stop/guard stop
+// with the full status and IPOC in the log, and the stop latches their slots. While inactive only
+// a new e-stop or guard stop latches, here, from the mxA thread; drives/motion/EXT stay live.
 void KukaMxaRsiHardwareInterface::OnStatusUpdate(
   const kuka::external::control::kss::StatusUpdate & update)
 {
-  using kuka_drivers_core::StopReason;
-
   // Only a rising edge is a new event; the flag stays set for as long as its cause is held.
   const bool emergency_stop_raised = update.emergency_stop_ && !last_emergency_stop_;
   const bool guard_stop_raised = update.guard_stop_ && !last_guard_stop_;
@@ -280,26 +278,28 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
     return;
   }
 
-  StopReason reason = StopReason::NONE;
-  if (emergency_stop_raised)
-  {
-    reason = StopReason::EMERGENCY_STOP;
-  }
-  else if (guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed))
-  {
-    // Ignore a guard stop raised by our own stop request.
-    reason = StopReason::GUARD_STOP;
-  }
-
-  if (reason == StopReason::NONE || !LatchStopReason(reason))
+  // A guard stop raised by our own stop request is the stop's own doing.
+  const bool latch_guard =
+    guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed);
+  if (!emergency_stop_raised && !latch_guard)
   {
     return;
   }
+  if (emergency_stop_raised)
+  {
+    RequestInhibitorLatch(Inhibitor::ESTOP);
+  }
+  if (latch_guard)
+  {
+    RequestInhibitorLatch(Inhibitor::GUARD);
+  }
   set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
   RCLCPP_ERROR(
-    logger_, "Stopping: %s (emergency_stop=%d guard_stop=%d), independent of the component's state",
-    kuka_drivers_core::StopReasonName(reason), static_cast<int>(update.emergency_stop_),
-    static_cast<int>(update.guard_stop_));
+    logger_,
+    "Latched while inactive: inhibitor/estop=%d inhibitor/guard=%d (emergency_stop=%d "
+    "guard_stop=%d)",
+    static_cast<int>(emergency_stop_raised), static_cast<int>(latch_guard),
+    static_cast<int>(update.emergency_stop_), static_cast<int>(update.guard_stop_));
 }
 
 void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)

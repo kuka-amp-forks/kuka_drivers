@@ -57,6 +57,7 @@ KukaEkiRsiHardwareInterface::on_export_state_interfaces()
     ExportState(
       state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX, name, value);
   }
+  ExportInhibitorSlots(state_interfaces);
 
   return state_interfaces;
 }

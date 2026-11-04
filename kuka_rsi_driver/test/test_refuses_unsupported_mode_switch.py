@@ -29,7 +29,6 @@ from lifecycle_msgs.msg import State
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rsi_fault_support import (  # noqa: E402
     JTC,
-    STOP_REASON_NONE,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -86,7 +85,7 @@ class TestRefusesUnsupportedModeSwitch(RsiFaultTestCase):
         self.assertEqual(self.controller_state(JTC), "active")
         self.assertEqual(self.controller_state(VELOCITY_CONTROLLER), "inactive")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_latched(set())
         self.move_joint_and_wait()
         self.finish(log, JTC)
 
@@ -101,7 +100,7 @@ class TestRefusesUnsupportedModeSwitch(RsiFaultTestCase):
         self.assertEqual(self.controller_state(GPIO_CONTROLLER), "active")
         self.assertEqual(self.controller_state(JTC), "active")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_latched(set())
         self.move_joint_and_wait()
         self.finish(log, GPIO_CONTROLLER, JTC)
 

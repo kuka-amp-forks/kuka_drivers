@@ -15,7 +15,9 @@
 #ifndef KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 #define KUKA_RSI_DRIVER__HARDWARE_INTERFACE_RSI_BASE_HPP_
 
+#include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -89,16 +91,54 @@ public:
     const std::vector<std::string> & start_interfaces,
     const std::vector<std::string> & stop_interfaces) override;
 
-  // No-op here; the mxA interface overrides it to latch e-stop/guard stop in any state.
+  // No-op here; the mxA interface overrides it to latch e-stop/guard stop while inactive.
   virtual KUKA_RSI_DRIVER_PUBLIC void OnStatusUpdate(
     const kuka::external::control::kss::StatusUpdate &)
   {
   }
 
 protected:
-  // Latches reason unless one at least as severe is set already (see StopReasonSeverity); true
-  // when this call set it. write() returns DEACTIVATE while it is set.
+  // The inhibitor slots, in export order: inhibitor/<name>/{active,latched,operator_action}.
+  enum Inhibitor : size_t
+  {
+    ESTOP,
+    GUARD,
+    MODE,
+    DRIVE_FAULT,
+    BRAKE_TEST,
+    RSI,
+    INHIBITOR_COUNT
+  };
+  static constexpr std::array<const char *, INHIBITOR_COUNT> INHIBITOR_NAMES = {
+    "estop", "guard", "mode", "drive_fault", "brake_test", "rsi"};
+  // mode never latches: the key switch is its own release.
+  static constexpr std::array<bool, INHIBITOR_COUNT> INHIBITOR_LATCHES = {true, true, false,
+                                                                          true, true, true};
+  // Fixed per slot: 1 when the release needs an operator.
+  static constexpr std::array<double, INHIBITOR_COUNT> INHIBITOR_OPERATOR_ACTION = {1.0, 1.0, 1.0,
+                                                                                    1.0, 1.0, 0.0};
+
+  // Latches reason unless one is set already (the first cause wins); true when this call set it.
+  // write() returns DEACTIVATE while it is set.
   KUKA_RSI_DRIVER_LOCAL bool LatchStopReason(kuka_drivers_core::StopReason reason);
+
+  // Exports the six inhibitor slots; the mxA and EKI interfaces call it, RSI-only has no source.
+  KUKA_RSI_DRIVER_LOCAL void ExportInhibitorSlots(
+    std::vector<hardware_interface::StateInterface::ConstSharedPtr> & state_interfaces);
+
+  // Refreshes active from the sources, folds in the latch requests and clears the latches whose
+  // source shows the release. read() calls it every cycle.
+  KUKA_RSI_DRIVER_LOCAL void UpdateInhibitors();
+
+  KUKA_RSI_DRIVER_LOCAL void UpdateInhibitorActive();
+
+  // At the instant the component leaves ACTIVE on a fault: every active slot but mode latches,
+  // and a stop with no slot active raises inhibitor/rsi, since only a lost command link explains
+  // it.
+  KUKA_RSI_DRIVER_LOCAL void LatchInhibitorsAtStop();
+
+  // Latches a slot from any thread; read() applies it.
+  KUKA_RSI_DRIVER_LOCAL void RequestInhibitorLatch(Inhibitor slot);
 
   KUKA_RSI_DRIVER_LOCAL bool SetupRobot(
     kuka::external::control::kss::Configuration & config,
@@ -113,11 +153,9 @@ protected:
 
   KUKA_RSI_DRIVER_LOCAL void ResetDiagnostics();
 
-  // Clears the stop and drive-fault latches; only a successful activation may call it.
+  // Clears the stop cause, the drive and RSI faults and every latch; only a successful activation
+  // may call it.
   KUKA_RSI_DRIVER_LOCAL void ResetStopReason();
-
-  // Copies the latch into the exported state interface.
-  KUKA_RSI_DRIVER_LOCAL void UpdateStopReasonState();
 
   KUKA_RSI_DRIVER_LOCAL void UpdateDriveFaultState();
 
@@ -206,13 +244,20 @@ protected:
     kuka_drivers_core::HardwareEvent last_event =
       kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED;
     std::mutex event_mutex;
-    // Held through INACTIVE, reset by a successful activation.
+    // The cause logged at the stop; held through INACTIVE, reset by a successful activation.
     std::atomic<kuka_drivers_core::StopReason> stop_reason{kuka_drivers_core::StopReason::NONE};
-    double stop_reason_state = 0.0;
     // The KRC's stop message, set from the SDK's error event; the SDK reports no release, so it
     // holds until a successful activation, which the KRC refuses while the message stands.
     std::atomic<bool> drive_fault{false};
     double drive_fault_state = 0.0;
+    // The driver's own RSI stop (a receive or send failure, or a stop no other slot explains),
+    // the active source of inhibitor/rsi; held until a successful activation.
+    std::atomic<bool> rsi_fault{false};
+    // Latches requested from the SDK and mxA threads, one bit per slot; read() folds them in.
+    std::atomic<uint8_t> latch_requests{0};
+    // The exported slot values, written on the control thread only.
+    std::array<double, INHIBITOR_COUNT> inhibitor_active{};
+    std::array<double, INHIBITOR_COUNT> inhibitor_latched{};
   };
 
   struct RuntimeState
