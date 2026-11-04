@@ -92,29 +92,35 @@ The `mxa_rsi` and `eki_rsi` hardware interfaces export the controller status as 
 | `state/brake_test_due` | `BRAKETEST_REQ_INT` | the controller requests a brake test; scheduling it is the client's job, the driver stops nothing |
 | `state/brake_test_warning` | `BRAKETEST_WARN` | the controller's brake-test warning |
 
-The `eki_rsi` interface fills the same flags from the EKI status, with the two brake-test flags at `0`. Every flag but `state/drive_fault` is live: it follows the controller and clears when the condition clears, so simultaneous causes read as several flags set at once. `state/drive_fault` is set from the SDK's error event for mxA error 801 in every lifecycle state. The SDK raises that event once when the error appears and never for its release, so the flag holds until the next successful activation; the KRC refuses an RSI start while the message stands, so a successful activation means the message was acknowledged. While the component is active, the same event also stops it (`stop_reason` `10`). The `rsi_only` interface exports `state/drive_fault` too, but has no mxA link to set it from.
+The `eki_rsi` interface fills the same flags from the EKI status, with the two brake-test flags at `0`. Every flag but `state/drive_fault` is live: it follows the controller and clears when the condition clears, so simultaneous causes read as several flags set at once. `state/drive_fault` is set from the SDK's error event for mxA error 801 in every lifecycle state. The SDK raises that event once when the error appears and never for its release, so the flag holds until the next successful activation; the KRC refuses an RSI start while the message stands, so a successful activation means the message was acknowledged. While the component is active, the same event also stops it, and the stop latches `inhibitor/drive_fault`. The `rsi_only` interface exports `state/drive_fault` too, but has no mxA link to set it from.
 
-The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read them with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, as the tests do (`test/config/stop_reason_broadcaster.yaml`).
+The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read them with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, as the tests do (`test/config/inhibitor_broadcaster.yaml`).
 
-### Stop reason
+### Inhibitor slots
 
-The hardware interfaces export `state/stop_reason` (prefixed like `state/server_state`), a double that names why the component last left `active`:
+The `mxa_rsi` and `eki_rsi` hardware interfaces report why the arm cannot move through six inhibitor slots, the stop surface a client reads. Each is a gpio group `inhibitor/<name>` (prefixed like `state`) with three state interfaces, `0` or `1`: `active`, `latched` and `operator_action`.
 
-| Value | Cause |
-|---|---|
-| `0` | none |
-| `1` | no RSI packet within `read_timeout_ms` |
-| `2` | sending an RSI command failed |
-| `3` | emergency stop (`mxa_rsi`) |
-| `4` | guard stop, for example the light curtain (`mxa_rsi`) |
-| `5` | drives not powered (`mxa_rsi`) |
-| `6` | motion not possible (`mxa_rsi`) |
-| `7` | the KRC left EXT (`mxa_rsi`) |
-| `8` | no mxA telegram within `mxa_status_timeout_ms` (`mxa_rsi`) |
-| `9` | the SDK reported external control stopped, for example the RSI program stopped on the controller (`eki_rsi`) |
-| `10` | the SDK reported an error, for example `STOPMESS active` (`eki_rsi`, `mxa_rsi`) |
+| Slot | `active` from | Latches | `operator_action` |
+|---|---|---|---|
+| `inhibitor/estop` | `state/emergency_stop` | yes | `1` (release and acknowledge) |
+| `inhibitor/guard` | `state/guard_stop` | yes | `1` |
+| `inhibitor/mode` | `state/operation_mode` is not `4` (EXT) | no | `1` (key switch) |
+| `inhibitor/drive_fault` | `state/drive_fault` | yes | `1` |
+| `inhibitor/brake_test` | `state/brake_test_due` | yes | `1` (iiQKA.UI only) |
+| `inhibitor/rsi` | the driver's own RSI stop: no RSI packet within `read_timeout_ms`, a failed send, or a stop no other slot explains; held until an activation succeeds | yes | `0` |
 
-The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause. The first cause wins. The value is held while the component is `inactive`, a normal `on_deactivate` leaves it as it was, a reconfigure after an mxA loss leaves it reading `8`, and a successful activation resets it to `0`. The SDK's stop and error events stop the component the same way while it is active, with the SDK's text in the log. They set nothing while it is inactive, since the component's own deactivation and activation raise them too. The SDK's mxA receive-timeout error comes 100 ms after the last telegram, by which time `mxa_status_timeout_ms` has already errored the component with `8`. The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read it with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, interface `stop_reason`.
+The latch rule:
+
+- `active` is the live signal, refreshed on every `read()` in every lifecycle state.
+- `latched` is set for every slot that is active at the instant the component leaves `active` on a fault, and for a new e-stop or guard stop while the component is `inactive`. It clears when the controller shows the release (the slot's `active` drops) or when an activation succeeds. `inhibitor/mode` never latches: the key switch is its own release.
+- A guard stop reported while the driver's own stop is pending latches nothing: some controllers report the drives-off after a commanded deactivate as a guard stop. A commanded deactivate latches nothing, since the component leaves `active` before anything drops.
+- `operator_action` is the fixed per-slot property in the table.
+
+Every cause is its own slot, with no ranking: an e-stop and a guard stop in one telegram read as two latched slots, and leaving EXT on a controller that raises a safety stop first reads as `inhibitor/mode` active with `inhibitor/guard` latched. `state/drives_powered` and `state/motion_possible` stay informational. Every stop raises at least one slot: a fault with no slot active, for example `motion_possible` or `drives_powered` dropping while active with nothing else set, or an SDK stop or error event the flags do not explain, means the command link to the controller is lost, so the component deactivates and raises `inhibitor/rsi`. An mxA loss (`mxa_status_timeout_ms`) is the component's error, not a stop, and has no slot.
+
+The cause of every stop stays a log line. The `mxa_rsi` interface checks the mxA status every cycle while active and stops on the first one that forbids motion, logging the raw status values with the cause (`Stopping: <cause> (...)`); the RSI receive and send failures and the SDK's stop and error events log their own `Stopping:` line. The first cause names the line, and the line after it (`Inhibitors at the stop: ...`) reads every slot active at the stop. A stop that raises `inhibitor/rsi` for want of another slot says so. A new e-stop or guard stop while inactive logs `Latched while inactive: ...`. The SDK's stop and error events set nothing while the component is inactive, since the component's own deactivation and activation raise them too; the SDK's mxA receive-timeout error comes 100 ms after the last telegram, by which time `mxa_status_timeout_ms` has already errored the component.
+
+The Lyrical `joint_state_broadcaster` does not publish these interfaces; read them with a state-only `gpio_controllers/GpioCommandController` on the six gpios, as the tests do (`test/config/inhibitor_broadcaster.yaml`).
 
 ### Command mode
 

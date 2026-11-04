@@ -26,7 +26,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rsi_fault_support import (  # noqa: E402
     NO_STOP_PACKET_LINE,
     RECEIVE_FAILURE_LINE,
-    STOP_REASON_RSI_RECEIVE_FAILED,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -53,7 +52,7 @@ class TestNoCommandAfterLatch(RsiFaultTestCase):
         match = log.wait_for_match(RECEIVE_FAILURE_LINE, timeout=5)
         self.assertIsNotNone(match, "no stop line in the driver log")
         latched_ipoc = int(match.group(2))
-        self.assert_stopped(log, STOP_REASON_RSI_RECEIVE_FAILED)
+        self.assert_stopped(log, {"rsi"})
         self.assertTrue(log.wait_for(NO_STOP_PACKET_LINE, timeout=5), "stop packet attempted")
 
         self.wait_for_states_after(latched_ipoc, count=UNANSWERED_STATES)

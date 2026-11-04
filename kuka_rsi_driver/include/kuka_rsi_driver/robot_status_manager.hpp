@@ -68,21 +68,21 @@ public:
       {hardware_interface::BRAKE_TEST_WARNING, &brake_test_warning_}};
   }
 
-  bool IsOperationModeExt()
+  bool IsOperationModeExt() const
   {
     return static_cast<uint8_t>(operation_mode_) ==
            static_cast<uint8_t>(kuka::external::control::OperationMode::EXT);
   }
 
-  bool DrivesPowered() { return static_cast<bool>(drives_powered_); }
+  bool DrivesPowered() const { return static_cast<bool>(drives_powered_); }
 
-  bool IsEmergencyStopActive() { return static_cast<bool>(emergency_stop_); }
+  bool IsEmergencyStopActive() const { return static_cast<bool>(emergency_stop_); }
 
-  bool IsMotionPossible() { return static_cast<bool>(motion_possible_); }
+  bool IsMotionPossible() const { return static_cast<bool>(motion_possible_); }
 
-  bool IsGuardStopActive() { return static_cast<bool>(guard_stop_); }
+  bool IsGuardStopActive() const { return static_cast<bool>(guard_stop_); }
 
-  bool IsBrakeTestDue() { return static_cast<bool>(brake_test_due_); }
+  bool IsBrakeTestDue() const { return static_cast<bool>(brake_test_due_); }
 
   std::string Describe() const
   {
@@ -169,6 +169,9 @@ public:
     std::lock_guard<std::mutex> lck{status_mtx_};
     return status_interfaces_;
   }
+
+  // The copy UpdateStateInterfaces() took, without the lock: only the thread that took it.
+  const StatusInterfaces & Current() const { return status_interfaces_; }
 
   // Called on the mxA thread for every received telegram, changed flags or not.
   void StampTelegram()

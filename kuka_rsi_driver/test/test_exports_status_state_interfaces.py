@@ -30,7 +30,6 @@ from rsi_fault_support import (  # noqa: E402
     CONTROL_EVENT_STOP_LINE,
     JTC,
     SDK_ERROR_LINE,
-    STOP_REASON_CONTROL_ERROR,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -70,14 +69,15 @@ class TestExportsStatusStateInterfaces(RsiFaultTestCase):
         self.publish_is_configured()
 
     def test_drive_fault_latches_from_sdk_error(self, proc_output):
-        # While INACTIVE the error sets the flag and latches no stop.
-        held = self.stop_reason()
+        # While INACTIVE the error sets the flag, the slot reads active, and nothing latches.
+        held = self.latched()
         log = LogCursor(proc_output)
         self.inject(f"error={STOP_MESSAGE_ERROR}")
         self.assertTrue(log.wait_for(DRIVE_FAULT_LINE, timeout=5), "no drive fault line")
         self.assertEqual(self.state_value("drive_fault"), 1.0)
         self.assertEqual(log.matches(CONTROL_EVENT_STOP_LINE), [], "stop latched while inactive")
-        self.assertEqual(self.stop_reason(), held)
+        self.assertTrue("drive_fault" in self.active(), "drive_fault not active")
+        self.assertEqual(self.latched(), held)
 
         # Other errors leave it set, a repeat logs nothing new, a refused activation keeps it.
         log = LogCursor(proc_output)
@@ -89,25 +89,29 @@ class TestExportsStatusStateInterfaces(RsiFaultTestCase):
         self.inject(f"operation_mode={OP_MODE_T1}")
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activated in T1")
         self.assertEqual(self.state_value("drive_fault"), 1.0)
+        self.assertTrue("drive_fault" in self.active(), "drive_fault not active")
 
         # A successful activation clears it.
         log = LogCursor(proc_output)
         self.resume_and_activate(log)
         self.assertEqual(self.state_value("drive_fault"), 0.0)
+        self.assert_active(set())
 
-        # While ACTIVE the error stops the component and sets the flag again.
+        # While ACTIVE the error stops the component, sets the flag again and latches the slot.
         self.switch(activate=[JTC])
         log = LogCursor(proc_output)
         self.inject(f"error={STOP_MESSAGE_ERROR}")
         self.assertTrue(log.wait_for(STOP_MESSAGE_STOP_LINE, timeout=5), "no stop line")
-        self.assert_stopped(log, STOP_REASON_CONTROL_ERROR)
+        self.assert_stopped(log, {"drive_fault"})
         self.assertEqual(self.state_value("drive_fault"), 1.0)
+        self.assert_active({"drive_fault"})
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)
 
         log = LogCursor(proc_output)
         self.resume_and_activate(log)
         self.assertEqual(self.state_value("drive_fault"), 0.0)
+        self.assert_latched(set())
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)

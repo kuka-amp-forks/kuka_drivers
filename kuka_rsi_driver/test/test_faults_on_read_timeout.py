@@ -25,7 +25,6 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rsi_fault_support import (  # noqa: E402
     RECEIVE_FAILURE_LINE,
-    STOP_REASON_RSI_RECEIVE_FAILED,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -59,7 +58,7 @@ class TestFaultsOnReadTimeout(RsiFaultTestCase):
         self.assertIsNotNone(match, "no stop line in the driver log")
         self.assertEqual(int(match.group(1)), READ_TIMEOUT_MS)
         latched_ipoc = int(match.group(2))
-        self.assert_stopped(log, STOP_REASON_RSI_RECEIVE_FAILED)
+        self.assert_stopped(log, {"rsi"})
 
         # The delayed packet is the next IPOC; it arrives after the latch and gets no answer.
         self.wait_for_states_after(latched_ipoc, count=2)

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -232,12 +233,28 @@ KukaRSIHardwareInterfaceBase::on_export_state_interfaces()
     hardware_interface::SERVER_STATE, &event_state_.server_state);
   ExportState(
     state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX,
-    hardware_interface::STOP_REASON, &event_state_.stop_reason_state);
-  ExportState(
-    state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX,
     hardware_interface::DRIVE_FAULT, &event_state_.drive_fault_state);
 
   return state_interfaces;
+}
+
+void KukaRSIHardwareInterfaceBase::ExportInhibitorSlots(
+  std::vector<hardware_interface::StateInterface::ConstSharedPtr> & state_interfaces)
+{
+  for (size_t i = 0; i < INHIBITOR_COUNT; i++)
+  {
+    const std::string prefix =
+      interface_prefix_ + hardware_interface::INHIBITOR_PREFIX + "/" + INHIBITOR_NAMES[i];
+    ExportState(
+      state_interfaces, prefix, hardware_interface::INHIBITOR_ACTIVE,
+      &event_state_.inhibitor_active[i]);
+    ExportState(
+      state_interfaces, prefix, hardware_interface::INHIBITOR_LATCHED,
+      &event_state_.inhibitor_latched[i]);
+    ExportState(
+      state_interfaces, prefix, hardware_interface::INHIBITOR_OPERATOR_ACTION,
+      &INHIBITOR_OPERATOR_ACTION[i]);
+  }
 }
 
 std::vector<hardware_interface::CommandInterface::SharedPtr>
@@ -348,7 +365,6 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::St
   runtime_state_.msg_received = false;
   runtime_state_.stop_pending = false;
   runtime_state_.cancel_confirmed = false;
-  UpdateStopReasonState();
   robot_ptr_.reset();
   return CallbackReturn::SUCCESS;
 }
@@ -359,8 +375,8 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     std::lock_guard<std::mutex> lk(event_state_.event_mutex);
     event_state_.server_state = static_cast<double>(event_state_.last_event);
   }
-  UpdateStopReasonState();
   UpdateDriveFaultState();
+  UpdateInhibitors();
 
   // The first packet is received at activation, Read() should not be called before
   // Add short sleep to avoid RT thread eating CPU
@@ -376,13 +392,15 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
   }
 
   Read(read_timeout_.count());
-  if (
-    !runtime_state_.msg_received &&
-    LatchStopReason(kuka_drivers_core::StopReason::RSI_RECEIVE_FAILED))
+  if (!runtime_state_.msg_received)
   {
-    RCLCPP_ERROR(
-      logger_, "Stopping: no RSI packet within %ld ms of the last one, IPOC %lu",
-      static_cast<int64_t>(read_timeout_.count()), diagnostics_state_.last_ipoc);
+    event_state_.rsi_fault.store(true, std::memory_order_relaxed);
+    if (LatchStopReason(kuka_drivers_core::StopReason::RSI_RECEIVE_FAILED))
+    {
+      RCLCPP_ERROR(
+        logger_, "Stopping: no RSI packet within %ld ms of the last one, IPOC %lu",
+        static_cast<int64_t>(read_timeout_.count()), diagnostics_state_.last_ipoc);
+    }
   }
   PublishStates(false);
   return return_type::OK;
@@ -393,7 +411,7 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
 {
   if (event_state_.stop_reason.load() != kuka_drivers_core::StopReason::NONE)
   {
-    UpdateStopReasonState();
+    LatchInhibitorsAtStop();
     return return_type::DEACTIVATE;
   }
 
@@ -406,6 +424,7 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
   FetchCommands();
   if (!Write())
   {
+    event_state_.rsi_fault.store(true, std::memory_order_relaxed);
     if (LatchStopReason(kuka_drivers_core::StopReason::RSI_SEND_FAILED))
     {
       RCLCPP_ERROR(
@@ -415,31 +434,12 @@ return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclc
     // read() still runs while INACTIVE, so this reaches the event broadcaster same as a receive
     // failure, and robot_manager gets told to deactivate JTC/JSB.
     set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
-    UpdateStopReasonState();
+    LatchInhibitorsAtStop();
     return return_type::DEACTIVATE;
   }
 
   return return_type::OK;
 }
-
-namespace
-{
-// Priority of a stop cause; a more severe cause replaces a latched one.
-int StopReasonSeverity(kuka_drivers_core::StopReason reason)
-{
-  switch (reason)
-  {
-    case kuka_drivers_core::StopReason::NONE:
-      return 0;
-    case kuka_drivers_core::StopReason::EMERGENCY_STOP:
-      return 3;
-    case kuka_drivers_core::StopReason::GUARD_STOP:
-      return 2;
-    default:
-      return 1;
-  }
-}
-}  // namespace
 
 // Our own stop and start raise these events too, so only a running component latches them. The
 // KRC's stop message is a condition of the controller, so it is taken in any state.
@@ -488,40 +488,92 @@ return_type KukaRSIHardwareInterfaceBase::prepare_command_mode_switch(
 
 bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason reason)
 {
-  auto current = event_state_.stop_reason.load();
-  while (StopReasonSeverity(reason) > StopReasonSeverity(current))
-  {
-    if (event_state_.stop_reason.compare_exchange_weak(current, reason))
-    {
-      if (current != kuka_drivers_core::StopReason::NONE)
-      {
-        RCLCPP_WARN(
-          logger_, "stop_reason '%s' replaced by the more severe '%s'",
-          kuka_drivers_core::StopReasonName(current), kuka_drivers_core::StopReasonName(reason));
-      }
-      return true;
-    }
-  }
-  return false;
+  auto expected = kuka_drivers_core::StopReason::NONE;
+  return event_state_.stop_reason.compare_exchange_strong(expected, reason);
 }
 
 void KukaRSIHardwareInterfaceBase::ResetStopReason()
 {
   event_state_.stop_reason.store(kuka_drivers_core::StopReason::NONE);
   event_state_.drive_fault.store(false);
-  UpdateStopReasonState();
+  event_state_.rsi_fault.store(false);
+  event_state_.latch_requests.store(0);
+  event_state_.inhibitor_latched.fill(0.0);
   UpdateDriveFaultState();
-}
-
-void KukaRSIHardwareInterfaceBase::UpdateStopReasonState()
-{
-  event_state_.stop_reason_state =
-    static_cast<double>(static_cast<uint8_t>(event_state_.stop_reason.load()));
+  UpdateInhibitorActive();
 }
 
 void KukaRSIHardwareInterfaceBase::UpdateDriveFaultState()
 {
   event_state_.drive_fault_state = event_state_.drive_fault.load() ? 1.0 : 0.0;
+}
+
+void KukaRSIHardwareInterfaceBase::UpdateInhibitorActive()
+{
+  // The copy this cycle's read() took, so the status needs no lock here.
+  const auto & status = control_state_.status_manager.Current();
+  auto & active = event_state_.inhibitor_active;
+  active[Inhibitor::ESTOP] = status.IsEmergencyStopActive() ? 1.0 : 0.0;
+  active[Inhibitor::GUARD] = status.IsGuardStopActive() ? 1.0 : 0.0;
+  active[Inhibitor::MODE] = status.IsOperationModeExt() ? 0.0 : 1.0;
+  active[Inhibitor::DRIVE_FAULT] = event_state_.drive_fault.load() ? 1.0 : 0.0;
+  active[Inhibitor::BRAKE_TEST] = status.IsBrakeTestDue() ? 1.0 : 0.0;
+  active[Inhibitor::RSI] = event_state_.rsi_fault.load(std::memory_order_relaxed) ? 1.0 : 0.0;
+}
+
+// The release is applied before the new requests: a request that arrives with the telegram that
+// set its source would otherwise be cleared against the copy of the cycle before.
+void KukaRSIHardwareInterfaceBase::UpdateInhibitors()
+{
+  UpdateInhibitorActive();
+  const uint8_t requests = event_state_.latch_requests.exchange(0, std::memory_order_acq_rel);
+  for (size_t i = 0; i < INHIBITOR_COUNT; i++)
+  {
+    if (event_state_.inhibitor_active[i] == 0.0)
+    {
+      event_state_.inhibitor_latched[i] = 0.0;
+    }
+    if (requests & (1u << i))
+    {
+      event_state_.inhibitor_latched[i] = 1.0;
+    }
+  }
+}
+
+void KukaRSIHardwareInterfaceBase::LatchInhibitorsAtStop()
+{
+  UpdateInhibitorActive();
+  auto & active = event_state_.inhibitor_active;
+  if (std::none_of(active.cbegin(), active.cend(), [](double value) { return value != 0.0; }))
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "Stopping: '%s' with no inhibitor active, the command link to the controller is lost; "
+      "raising inhibitor/rsi",
+      kuka_drivers_core::StopReasonName(event_state_.stop_reason.load()));
+    event_state_.rsi_fault.store(true, std::memory_order_relaxed);
+    active[Inhibitor::RSI] = 1.0;
+  }
+  for (size_t i = 0; i < INHIBITOR_COUNT; i++)
+  {
+    if (active[i] != 0.0 && INHIBITOR_LATCHES[i])
+    {
+      event_state_.inhibitor_latched[i] = 1.0;
+    }
+  }
+  RCLCPP_ERROR(
+    logger_,
+    "Inhibitors at the stop: estop=%d guard=%d mode=%d drive_fault=%d brake_test=%d rsi=%d "
+    "(active; every active slot but mode is latched)",
+    static_cast<int>(active[Inhibitor::ESTOP]), static_cast<int>(active[Inhibitor::GUARD]),
+    static_cast<int>(active[Inhibitor::MODE]), static_cast<int>(active[Inhibitor::DRIVE_FAULT]),
+    static_cast<int>(active[Inhibitor::BRAKE_TEST]), static_cast<int>(active[Inhibitor::RSI]));
+}
+
+void KukaRSIHardwareInterfaceBase::RequestInhibitorLatch(Inhibitor slot)
+{
+  event_state_.latch_requests.fetch_or(
+    static_cast<uint8_t>(1u << static_cast<size_t>(slot)), std::memory_order_acq_rel);
 }
 
 bool KukaRSIHardwareInterfaceBase::SetupRobot(

@@ -53,7 +53,8 @@ class TestExportsBrakeTestStatus(RsiFaultTestCase):
         self.inject(f"{token}=0")
         self.assertEqual(self.state_value(name), 0.0)
 
-        # While active it is reported the same way and stops nothing.
+        # While active it is reported the same way and stops nothing; the request alone shows
+        # inhibitor/brake_test active, not latched.
         self.resume_and_activate(log)
         self.switch(activate=[JTC])
         log = LogCursor(proc_output)
@@ -62,8 +63,11 @@ class TestExportsBrakeTestStatus(RsiFaultTestCase):
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
         self.assertEqual(self.controller_state(JTC), "active")
         self.assertFalse(log.wait_for("Stopping:", timeout=0.1), "a brake-test flag stopped it")
+        self.assert_active({"brake_test"} if name == "brake_test_due" else set())
+        self.assert_latched(set())
         self.inject(f"{token}=0")
         self.assertEqual(self.state_value(name), 0.0)
+        self.assert_active(set())
 
         self.switch(deactivate=[JTC])
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
