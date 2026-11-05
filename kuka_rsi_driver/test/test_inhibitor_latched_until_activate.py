@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A latched slot holds through INACTIVE and a refused activation; a successful one clears it."""
+"""A latched slot holds through INACTIVE and its cause's release until an activation succeeds."""
 
 import os
 import sys
@@ -28,6 +28,7 @@ from mxa_status_fake_support import OP_MODE_T1  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
     JTC,
     RECEIVE_FAILURE_LINE,
+    STATUS_STOP_LINE,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -40,11 +41,40 @@ SILENCE_PACKETS = 100000
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
 def generate_test_description():
-    return fault_launch_description()
+    return fault_launch_description(respawn_simulator=True)
 
 
 class TestInhibitorLatchedUntilActivate(RsiFaultTestCase):
-    def test_inhibitor_latched_until_activate(self, proc_output, proc_info):
+    def park(self, log):
+        """Deactivate, check nothing latched, and wait out the simulator's respawn."""
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.assert_latched(set())
+        self.wait_for_simulator_respawn(log)
+
+    def test_estop_latch_holds_after_release(self, proc_output):
+        log = LogCursor(proc_output)
+        self.start_streaming(log)
+
+        log = LogCursor(proc_output)
+        self.inject("emergency_stop=1")
+        self.assertIsNotNone(log.wait_for_match(STATUS_STOP_LINE, timeout=5), "no stop line")
+        self.assert_stopped(log, {"estop"})
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.wait_for_simulator_respawn(log)
+
+        # Released while INACTIVE, the slot stays latched until an activation succeeds.
+        self.inject("emergency_stop=0")
+        self.assert_active(set())
+        self.assert_latched({"estop"})
+
+        log = LogCursor(proc_output)
+        self.resume_and_activate(log)
+        self.assert_active(set())
+        self.assert_latched(set())
+        self.park(log)
+
+    def test_inhibitor_latched_until_activate(self, proc_output):
         log = LogCursor(proc_output)
         self.start_streaming(log)
 
@@ -73,8 +103,7 @@ class TestInhibitorLatchedUntilActivate(RsiFaultTestCase):
         self.switch(activate=[JTC])
         self.move_joint_and_wait()
         self.switch(deactivate=[JTC])
-        self.deactivate_and_wait_for_simulator(proc_info)
-        self.assert_latched(set())
+        self.park(log)
 
 
 @launch_testing.post_shutdown_test()

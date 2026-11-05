@@ -522,18 +522,12 @@ void KukaRSIHardwareInterfaceBase::UpdateInhibitorActive()
   active[Inhibitor::RSI] = event_state_.rsi_fault.load(std::memory_order_relaxed) ? 1.0 : 0.0;
 }
 
-// The release is applied before the new requests: a request that arrives with the telegram that
-// set its source would otherwise be cleared against the copy of the cycle before.
 void KukaRSIHardwareInterfaceBase::UpdateInhibitors()
 {
   UpdateInhibitorActive();
   const uint8_t requests = event_state_.latch_requests.exchange(0, std::memory_order_acq_rel);
   for (size_t i = 0; i < INHIBITOR_COUNT; i++)
   {
-    if (event_state_.inhibitor_active[i] == 0.0)
-    {
-      event_state_.inhibitor_latched[i] = 0.0;
-    }
     if (requests & (1u << i))
     {
       event_state_.inhibitor_latched[i] = 1.0;

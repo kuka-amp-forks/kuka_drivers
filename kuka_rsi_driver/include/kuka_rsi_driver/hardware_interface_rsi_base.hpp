@@ -126,8 +126,8 @@ protected:
   KUKA_RSI_DRIVER_LOCAL void ExportInhibitorSlots(
     std::vector<hardware_interface::StateInterface::ConstSharedPtr> & state_interfaces);
 
-  // Refreshes active from the sources, folds in the latch requests and clears the latches whose
-  // source shows the release. read() calls it every cycle.
+  // Refreshes active from the sources and folds in the latch requests. read() calls it every
+  // cycle; a latch outlives its source and clears only in ResetStopReason().
   KUKA_RSI_DRIVER_LOCAL void UpdateInhibitors();
 
   KUKA_RSI_DRIVER_LOCAL void UpdateInhibitorActive();
