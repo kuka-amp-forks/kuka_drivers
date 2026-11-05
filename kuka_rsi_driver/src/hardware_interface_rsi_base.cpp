@@ -233,6 +233,9 @@ KukaRSIHardwareInterfaceBase::on_export_state_interfaces()
   ExportState(
     state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX,
     hardware_interface::STOP_REASON, &event_state_.stop_reason_state);
+  ExportState(
+    state_interfaces, interface_prefix_ + hardware_interface::STATE_PREFIX,
+    hardware_interface::DRIVE_FAULT, &event_state_.drive_fault_state);
 
   return state_interfaces;
 }
@@ -357,6 +360,7 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     event_state_.server_state = static_cast<double>(event_state_.last_event);
   }
   UpdateStopReasonState();
+  UpdateDriveFaultState();
 
   // The first packet is received at activation, Read() should not be called before
   // Add short sleep to avoid RT thread eating CPU
@@ -437,10 +441,20 @@ int StopReasonSeverity(kuka_drivers_core::StopReason reason)
 }
 }  // namespace
 
-// Our own stop and start raise these events too, so only a running component latches them.
+// Our own stop and start raise these events too, so only a running component latches them. The
+// KRC's stop message is a condition of the controller, so it is taken in any state.
 void KukaRSIHardwareInterfaceBase::OnControlEvent(
   kuka_drivers_core::StopReason reason, const std::string & detail)
 {
+  if (
+    reason == kuka_drivers_core::StopReason::CONTROL_ERROR && detail == STOP_MESSAGE_ERROR_TEXT &&
+    !event_state_.drive_fault.exchange(true))
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "Drive fault: the KRC latched a stop message (mxA error 801), held until the next successful "
+      "activation");
+  }
   if (!runtime_state_.is_active.load(std::memory_order_acquire) || !LatchStopReason(reason))
   {
     return;
@@ -494,13 +508,20 @@ bool KukaRSIHardwareInterfaceBase::LatchStopReason(kuka_drivers_core::StopReason
 void KukaRSIHardwareInterfaceBase::ResetStopReason()
 {
   event_state_.stop_reason.store(kuka_drivers_core::StopReason::NONE);
+  event_state_.drive_fault.store(false);
   UpdateStopReasonState();
+  UpdateDriveFaultState();
 }
 
 void KukaRSIHardwareInterfaceBase::UpdateStopReasonState()
 {
   event_state_.stop_reason_state =
     static_cast<double>(static_cast<uint8_t>(event_state_.stop_reason.load()));
+}
+
+void KukaRSIHardwareInterfaceBase::UpdateDriveFaultState()
+{
+  event_state_.drive_fault_state = event_state_.drive_fault.load() ? 1.0 : 0.0;
 }
 
 bool KukaRSIHardwareInterfaceBase::SetupRobot(
