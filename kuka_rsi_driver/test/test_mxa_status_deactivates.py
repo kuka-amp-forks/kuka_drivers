@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Each mxA status that forbids motion deactivates the component with its own stop_reason."""
+"""Each mxA status that forbids motion deactivates the component and raises its slot."""
 
 import os
 import re
@@ -27,15 +27,11 @@ from lifecycle_msgs.msg import State
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mxa_status_fake_support import OP_MODE_T1  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
-    ANY_STATE_STOP_LINE,
+    INACTIVE_LATCH_LINE,
     JTC,
     RECEIVE_FAILURE_LINE,
     STATUS_STOP_LINE,
-    STOP_REASON_DRIVES_NOT_POWERED,
-    STOP_REASON_EMERGENCY_STOP,
-    STOP_REASON_GUARD_STOP,
-    STOP_REASON_NONE,
-    STOP_REASON_NOT_IN_EXT,
+    UNATTRIBUTED_LINE,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -52,8 +48,12 @@ def generate_test_description():
 
 
 class TestMxaStatusDeactivates(RsiFaultTestCase):
-    def stop_on_status(self, proc_output, datagram, reason, name, clear):
-        """Stream, inject a status, check the stop names it, then clear it and reactivate."""
+    def stop_on_status(self, proc_output, datagram, name, clear, active, latched):
+        """Stream, inject a status, check the stop names it and its slots, clear it, reactivate.
+
+        active and latched name the slots after the stop; a stop with no slot active is the
+        unattributed one, which raises rsi.
+        """
         log = LogCursor(proc_output)
         self.start_streaming(log)
 
@@ -63,41 +63,54 @@ class TestMxaStatusDeactivates(RsiFaultTestCase):
         self.assertIsNotNone(match, "no stop line in the driver log")
         self.assertEqual(match.group(1), name)
         self.assertTrue(datagram in match.group(2), "raw status not logged with the cause")
-        self.assert_stopped(log, reason)
+        self.assert_stopped(log, latched)
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.assertEqual(log.matches(RECEIVE_FAILURE_LINE), [], "RSI blamed for a status stop")
+        self.assertEqual(
+            len(log.matches(UNATTRIBUTED_LINE)), 1 if active == {"rsi"} else 0, "attribution"
+        )
         self._spin_for(0.5)
-        self.assertEqual(self.stop_reason(), reason)
+        self.assert_active(active)
+        self.assert_latched(latched)
 
         log = LogCursor(proc_output)
         self.inject(clear)
         self.resume_and_activate(log)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_active(set())
+        self.assert_latched(set())
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)
 
     def test_drives_off_deactivates(self, proc_output):
+        # drives_powered is informational, so the stop is unattributed and raises rsi.
         self.stop_on_status(
             proc_output,
             "drives_powered=0",
-            STOP_REASON_DRIVES_NOT_POWERED,
             "drives not powered",
             "drives_powered=1",
+            active={"rsi"},
+            latched={"rsi"},
         )
 
     def test_estop_deactivates_with_estop_reason(self, proc_output):
         self.stop_on_status(
             proc_output,
             "emergency_stop=1",
-            STOP_REASON_EMERGENCY_STOP,
             "emergency stop",
             "emergency_stop=0",
+            active={"estop"},
+            latched={"estop"},
         )
 
     def test_guard_stop_deactivates_with_guard_stop_reason(self, proc_output):
         self.stop_on_status(
-            proc_output, "guard_stop=1", STOP_REASON_GUARD_STOP, "guard stop", "guard_stop=0"
+            proc_output,
+            "guard_stop=1",
+            "guard stop",
+            "guard_stop=0",
+            active={"guard"},
+            latched={"guard"},
         )
 
     def test_guard_stop_during_own_stop_is_not_latched(self, proc_output):
@@ -116,19 +129,23 @@ class TestMxaStatusDeactivates(RsiFaultTestCase):
         self.assertIsNotNone(complete, "stop never completed")
         self.assertLess(injected.start(), complete.start(), "stop completed before the guard stop")
         self._spin_for(0.5)
-        self.assertEqual(log.matches(ANY_STATE_STOP_LINE), [], "own stop latched as a guard stop")
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assertEqual(log.matches(INACTIVE_LATCH_LINE), [], "own stop latched the guard stop")
+        self.assert_active({"guard"})
+        self.assert_latched(set())
 
         self.inject("guard_stop=0 cancel_cycles=12")
+        self.assert_active(set())
         self.wait_for_simulator_respawn(log)
 
     def test_op_mode_change_deactivates(self, proc_output):
+        # The key switch is its own release: mode is active at the stop and never latched.
         self.stop_on_status(
             proc_output,
             f"operation_mode={OP_MODE_T1}",
-            STOP_REASON_NOT_IN_EXT,
             "KRC not in EXT",
             "operation_mode=4",
+            active={"mode"},
+            latched=set(),
         )
 
 

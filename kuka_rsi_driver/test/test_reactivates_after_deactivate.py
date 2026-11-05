@@ -31,8 +31,6 @@ from joint_move_test_case import MOVE_RAD  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
     SIMULATOR_COMMAND_LINE,
     SIMULATOR_STATE_TOPIC,
-    STOP_REASON_CONTROL_STOPPED,
-    STOP_REASON_NONE,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -73,7 +71,7 @@ class TestReactivatesAfterDeactivate(RsiFaultTestCase):
         # The stop leaves JTC's last command, the moved position, in the command interface.
         log = LogCursor(proc_output)
         self.inject("stopped=RSI_program_stopped")
-        self.assert_stopped(log, STOP_REASON_CONTROL_STOPPED)
+        self.assert_stopped(log, {"rsi"})
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)
         commands = log.matches(SIMULATOR_COMMAND_LINE)
@@ -86,7 +84,7 @@ class TestReactivatesAfterDeactivate(RsiFaultTestCase):
         log = LogCursor(proc_output)
         first_state = len(self.measured)
         self.resume_and_activate(log)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_latched(set())
         commands = log.matches(SIMULATOR_COMMAND_LINE)
         self.assertTrue(commands, "no command after the activation")
         # AK is the correction from the position of the first packet, so 0 is the measured one.

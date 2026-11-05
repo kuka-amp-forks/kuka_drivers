@@ -32,8 +32,7 @@ from rsi_fault_support import (  # noqa: E402
     JSB,
     JTC,
     MXA_LOSS_LINE,
-    STOP_REASON_BROADCASTER,
-    STOP_REASON_NONE,
+    INHIBITOR_BROADCASTER,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -60,14 +59,14 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
         if self.component_state() == State.PRIMARY_STATE_UNCONFIGURED:
             self.inject("link_up")
             self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
-            self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
-        for name in (JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER):
+            self.switch(activate=[JSB, INHIBITOR_BROADCASTER, EVENT_BROADCASTER])
+        for name in (JSB, INHIBITOR_BROADCASTER, EVENT_BROADCASTER):
             self._wait_for_controller_active(name, timeout=30)
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
         self.publish_is_configured()
 
     def assert_still(self, log, state):
-        """No loss line, and no error either: a held stop_reason of 8 logs no second line."""
+        """No loss line, and no error either: a held mxA-loss cause logs no second line."""
         self.assertEqual(log.matches(MXA_LOSS_LINE), [], "a local stall read as an mxA loss")
         self.assertEqual(self.component_state(), state, "a local stall errored the component")
 
@@ -80,7 +79,7 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
 
     def test_process_stop_while_inactive(self, proc_output, proc_info):
         self.prepare_inactive()
-        held = self.stop_reason()
+        held = self.latched()
         pid = proc_info["control_node"].pid
 
         # The whole process, fake included, freezes as under a CPU quota.
@@ -91,7 +90,7 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
             os.kill(pid, signal.SIGCONT)
             self._spin_for(0.2)
             self.assert_still(log, State.PRIMARY_STATE_INACTIVE)
-        self.assertEqual(self.stop_reason(), held)
+        self.assertEqual(self.latched(), held)
 
     def test_receive_stall_while_active(self, proc_output):
         log = LogCursor(proc_output)
@@ -100,7 +99,7 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
 
         log = LogCursor(proc_output)
         self.stall_receive(log, State.PRIMARY_STATE_ACTIVE)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_latched(set())
         self.assertEqual(self.controller_state(JTC), "active")
 
         log = LogCursor(proc_output)
@@ -111,11 +110,11 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
 
     def test_receive_stall_while_inactive(self, proc_output):
         self.prepare_inactive()
-        held = self.stop_reason()
+        held = self.latched()
 
         log = LogCursor(proc_output)
         self.stall_receive(log, State.PRIMARY_STATE_INACTIVE)
-        self.assertEqual(self.stop_reason(), held)
+        self.assertEqual(self.latched(), held)
 
         # A silent link after the stalls still errors within the bound.
         self.inject("link_down")
@@ -128,7 +127,7 @@ class TestReceiveStallDoesNotError(RsiFaultTestCase):
 
         self.inject("link_up")
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
-        self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
+        self.switch(activate=[JSB, INHIBITOR_BROADCASTER, EVENT_BROADCASTER])
 
 
 @launch_testing.post_shutdown_test()

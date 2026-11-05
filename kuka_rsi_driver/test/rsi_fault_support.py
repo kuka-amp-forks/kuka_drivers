@@ -47,24 +47,23 @@ from mxa_status_fake_support import (  # noqa: E402
 
 JTC = "joint_trajectory_controller"
 JSB = "joint_state_broadcaster"
-STOP_REASON_BROADCASTER = "stop_reason_broadcaster"
+INHIBITOR_BROADCASTER = "inhibitor_broadcaster"
 EVENT_BROADCASTER = "event_broadcaster"
 
 # kuka_drivers_core::HardwareEvent::ERROR, as published on the event broadcaster's topic.
 HARDWARE_EVENT_ERROR = 6
 
-# Values of the state/stop_reason interface (kuka_drivers_core::StopReason).
-STOP_REASON_NONE = 0.0
-STOP_REASON_RSI_RECEIVE_FAILED = 1.0
-STOP_REASON_RSI_SEND_FAILED = 2.0
-STOP_REASON_EMERGENCY_STOP = 3.0
-STOP_REASON_GUARD_STOP = 4.0
-STOP_REASON_DRIVES_NOT_POWERED = 5.0
-STOP_REASON_MOTION_NOT_POSSIBLE = 6.0
-STOP_REASON_NOT_IN_EXT = 7.0
-STOP_REASON_MXA_CONNECTION_LOST = 8.0
-STOP_REASON_CONTROL_STOPPED = 9.0
-STOP_REASON_CONTROL_ERROR = 10.0
+# The inhibitor slots (gpio groups inhibitor/<name>), their interfaces and fixed operator_action.
+INHIBITORS = ("estop", "guard", "mode", "drive_fault", "brake_test", "rsi")
+SLOT_INTERFACES = ("active", "latched", "operator_action")
+OPERATOR_ACTION = {
+    "estop": 1.0,
+    "guard": 1.0,
+    "mode": 1.0,
+    "drive_fault": 1.0,
+    "brake_test": 1.0,
+    "rsi": 0.0,
+}
 
 SIMULATOR_NODE = "/kuka_rsi_simulator"
 SIMULATOR_STATE_TOPIC = "/rsi_simulator_node/rsi/state"
@@ -82,15 +81,25 @@ STATUS_STOP_LINE = re.compile(
     r"Stopping: ([a-zA-Z ]+) \((emergency_stop=\d guard_stop=\d drives_powered=\d "
     r"motion_possible=\d operation_mode=\d+), IPOC (\d+)\)"
 )
-# e-stop/guard stop, latched from the mxA thread itself regardless of lifecycle state.
-ANY_STATE_STOP_LINE = re.compile(
-    r"Stopping: ([a-zA-Z ]+) \(emergency_stop=(\d) guard_stop=(\d)\), "
-    r"independent of the component's state"
+# A new e-stop/guard stop while INACTIVE, latched from the mxA thread itself.
+INACTIVE_LATCH_LINE = re.compile(
+    r"Latched while inactive: inhibitor/estop=(\d) inhibitor/guard=(\d) "
+    r"\(emergency_stop=(\d) guard_stop=(\d)\)"
+)
+# The slots at the instant the component leaves ACTIVE on a fault.
+INHIBITORS_AT_STOP_LINE = re.compile(
+    r"Inhibitors at the stop: estop=(\d) guard=(\d) mode=(\d) drive_fault=(\d) "
+    r"brake_test=(\d) rsi=(\d)"
+)
+# A stop with no slot active: the command link is lost, inhibitor/rsi is raised.
+UNATTRIBUTED_LINE = re.compile(
+    r"Stopping: '([^']+)' with no inhibitor active, the command link to the controller is "
+    r"lost; raising inhibitor/rsi"
 )
 MXA_LOSS_LINE = re.compile(
     r"Stopping: no mxA telegram within (\d+) ms, the newest is (\d+) ms old"
 )
-MXA_RELEASED_LINE = "Releasing the mxA client, stop_reason reads 'mxA connection lost'"
+MXA_RELEASED_LINE = "Releasing the mxA client, the stop cause is 'mxA connection lost'"
 # An SDK stop or error event latched while active.
 CONTROL_EVENT_STOP_LINE = re.compile(
     r"Stopping: (external control stopped|external control error): (\S+)"
@@ -133,7 +142,7 @@ def fault_launch_description(
     gpio_config="",
 ):
     """
-    control_node on the fake: JTC inactive; JSB, stop_reason and event broadcasters active.
+    control_node on the fake: JTC inactive; JSB, inhibitor and event broadcasters active.
 
     The simulator exits on the stop flag, so a test that reactivates after a stop packet
     needs it respawned; it comes back silent, and resume_and_activate resumes it.
@@ -180,7 +189,7 @@ def fault_launch_description(
             simulator,
             _spawner(JSB),
             _spawner(JTC, _config("joint_trajectory_controller_config.yaml"), inactive=True),
-            _spawner(STOP_REASON_BROADCASTER, _test_config("stop_reason_broadcaster.yaml")),
+            _spawner(INHIBITOR_BROADCASTER, _test_config("inhibitor_broadcaster.yaml")),
             _spawner(EVENT_BROADCASTER, _config("kuka_event_broadcaster_config.yaml")),
             *[
                 _spawner(name, _test_config(param_file), inactive=True)
@@ -201,11 +210,11 @@ def _stop_flag(xml_text):
 
 
 class RsiFaultTestCase(MxaStatusFakeTestCase):
-    """MxaStatusFakeTestCase that tracks stop_reason, hardware events and the simulator's IPOCs."""
+    """MxaStatusFakeTestCase that tracks the slots, hardware events and the simulator's IPOCs."""
 
     def setUp(self):
         super().setUp()
-        self.stop_reason_value = None
+        self.inhibitor_values = None
         self.state_values = {}
         self.hardware_events = []
         self.state_ipocs = []
@@ -218,7 +227,7 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
         )
         self.node.create_subscription(
             DynamicInterfaceGroupValues,
-            f"/{STOP_REASON_BROADCASTER}/gpio_states",
+            f"/{INHIBITOR_BROADCASTER}/gpio_states",
             self._on_gpio_states,
             10,
         )
@@ -236,19 +245,38 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
         )
 
     def _on_gpio_states(self, msg):
+        slots = {}
         for group, values in zip(msg.interface_groups, msg.interface_values):
             if group == "state":
                 self.state_values = dict(zip(values.interface_names, values.values))
-                if "stop_reason" in self.state_values:
-                    self.stop_reason_value = self.state_values["stop_reason"]
+            elif group.startswith("inhibitor/"):
+                slots[group[len("inhibitor/") :]] = dict(  # noqa: E203
+                    zip(values.interface_names, values.values)
+                )
+        if slots:
+            self.inhibitor_values = slots
 
-    def stop_reason(self):
-        self.stop_reason_value = None
+    def inhibitors(self):
+        """Return the next published slots: {name: {active, latched, operator_action}}."""
+        self.inhibitor_values = None
         self.assertTrue(
-            self._spin_until(lambda: self.stop_reason_value is not None, timeout=5),
-            "no stop_reason published",
+            self._spin_until(lambda: self.inhibitor_values is not None, timeout=5),
+            "no inhibitor slots published",
         )
-        return self.stop_reason_value
+        self.assertEqual(set(self.inhibitor_values), set(INHIBITORS), self.inhibitor_values)
+        return self.inhibitor_values
+
+    def active(self):
+        return {name for name, slot in self.inhibitors().items() if slot["active"] == 1.0}
+
+    def latched(self):
+        return {name for name, slot in self.inhibitors().items() if slot["latched"] == 1.0}
+
+    def assert_active(self, expected):
+        self.assertEqual(self.active(), set(expected))
+
+    def assert_latched(self, expected):
+        self.assertEqual(self.latched(), set(expected))
 
     def state_value(self, name):
         """Return the next published value of the state/<name> interface."""
@@ -327,17 +355,24 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
         self._spin_for(0.5)
         self.assertEqual(self.controller_state(JTC), "active")
         self.assertEqual(self.controller_state(JSB), "active")
-        self.assertEqual(self.controller_state(STOP_REASON_BROADCASTER), "active")
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assertEqual(self.controller_state(INHIBITOR_BROADCASTER), "active")
+        self.assert_latched(set())
 
-    def assert_stopped(self, log, reason):
-        """Check the component went INACTIVE on its own, took JTC with it and left JSB running."""
+    def assert_stopped(self, log, latched):
+        """
+        Check the component went INACTIVE on its own, took JTC with it and left JSB running.
+
+        latched names the slots the stop must have latched, and no other.
+        """
         self.assertTrue(log.wait_for(JTC_DEACTIVATED_LINE, timeout=5), "JTC not deactivated")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
         self.assertEqual(self.controller_state(JTC), "inactive")
         self.assertEqual(self.controller_state(JSB), "active")
-        self.assertEqual(self.controller_state(STOP_REASON_BROADCASTER), "active")
-        self.assertEqual(self.stop_reason(), reason)
+        self.assertEqual(self.controller_state(INHIBITOR_BROADCASTER), "active")
+        self.assertIsNotNone(
+            log.wait_for_match(INHIBITORS_AT_STOP_LINE, timeout=5), "no inhibitors-at-stop line"
+        )
+        self.assert_latched(latched)
 
     def wait_for_component_state(self, state_id, timeout=10):
         self.assertTrue(
@@ -366,12 +401,15 @@ class RsiFaultTestCase(MxaStatusFakeTestCase):
 
 
 __all__ = [
-    "ANY_STATE_STOP_LINE",
     "COMPONENT",
     "CONTROL_EVENT_STOP_LINE",
     "DEACTIVATION_REQUESTS_LINE",
     "EVENT_BROADCASTER",
     "HARDWARE_EVENT_ERROR",
+    "INACTIVE_LATCH_LINE",
+    "INHIBITOR_BROADCASTER",
+    "INHIBITORS",
+    "INHIBITORS_AT_STOP_LINE",
     "JSB",
     "JTC",
     "JTC_DEACTIVATED_LINE",
@@ -379,25 +417,16 @@ __all__ = [
     "MXA_RELEASED_LINE",
     "NO_STOP_PACKET_LINE",
     "OP_MODE_EXT",
+    "OPERATOR_ACTION",
     "RECEIVE_FAILURE_LINE",
     "SDK_ERROR_LINE",
     "SDK_RECEIVE_TIMEOUT_TEXT",
     "SEND_FAILURE_LINE",
     "SIMULATOR_READ_TIMEOUT_MS",
     "SIMULATOR_SILENCE_PACKETS",
+    "SLOT_INTERFACES",
     "STATUS_STOP_LINE",
-    "STOP_REASON_BROADCASTER",
-    "STOP_REASON_CONTROL_ERROR",
-    "STOP_REASON_CONTROL_STOPPED",
-    "STOP_REASON_DRIVES_NOT_POWERED",
-    "STOP_REASON_EMERGENCY_STOP",
-    "STOP_REASON_GUARD_STOP",
-    "STOP_REASON_MOTION_NOT_POSSIBLE",
-    "STOP_REASON_MXA_CONNECTION_LOST",
-    "STOP_REASON_NONE",
-    "STOP_REASON_NOT_IN_EXT",
-    "STOP_REASON_RSI_RECEIVE_FAILED",
-    "STOP_REASON_RSI_SEND_FAILED",
+    "UNATTRIBUTED_LINE",
     "LogCursor",
     "RsiFaultTestCase",
     "fault_launch_description",

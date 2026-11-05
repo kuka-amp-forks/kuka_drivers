@@ -20,7 +20,8 @@
 namespace kuka_drivers_core
 {
 /**
- * @brief Why the hardware component last left the active state, exported as state/stop_reason
+ * @brief Why the hardware component last left the active state, the cause it logs; the
+ * inhibitor slots are the exported stop surface
  */
 enum class StopReason : std::uint8_t
 {
