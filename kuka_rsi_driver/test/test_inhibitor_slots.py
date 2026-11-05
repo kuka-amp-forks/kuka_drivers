@@ -61,6 +61,10 @@ class TestInhibitorSlots(RsiFaultTestCase):
         """Let the pending stop finish, reactivate with the flags clear, then deactivate."""
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)
+        self.activate_and_park(proc_output)
+
+    def activate_and_park(self, proc_output):
+        """Activate with the flags clear, check it cleared every latch, then deactivate."""
         log = LogCursor(proc_output)
         self.resume_and_activate(log)
         self.assert_latched(set())
@@ -81,13 +85,14 @@ class TestInhibitorSlots(RsiFaultTestCase):
         self.assert_active({"estop"})
         self.assert_latched({"estop"})
 
-        # Held through a refused activation; the release clears it.
+        # Held through a refused activation and the release; a successful one clears it.
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activated")
         self.assertTrue(log.wait_for("Activation failed: Emergency stop is active", timeout=5))
         self.assert_latched({"estop"})
         self.inject("emergency_stop=0")
         self.assert_active(set())
-        self.assert_latched(set())
+        self.assert_latched({"estop"})
+        self.activate_and_park(proc_output)
 
     def test_exports_inhibitor_slots(self, proc_output):
         result = self._call(
@@ -131,12 +136,13 @@ class TestInhibitorSlots(RsiFaultTestCase):
         self.assert_active({"guard", "mode"})
         self.assertEqual(log.matches(UNATTRIBUTED_LINE), [], "attributed, yet rsi raised")
 
-        # Each release clears its own slot; mode was never latched.
+        # The released guard stays latched; mode was never latched.
         self.inject("guard_stop=0")
         self.assert_active({"mode"})
-        self.assert_latched(set())
+        self.assert_latched({"guard"})
         self.inject(f"operation_mode={OP_MODE_EXT}")
         self.assert_active(set())
+        self.assert_latched({"guard"})
         self.reactivate_and_park(proc_output, log)
 
     def test_own_deactivate_latches_no_slot(self, proc_output):
@@ -171,13 +177,13 @@ class TestInhibitorSlots(RsiFaultTestCase):
         self.assert_active({"estop", "guard"})
         self.assertEqual(log.matches(UNATTRIBUTED_LINE), [], "attributed, yet rsi raised")
 
-        # Each release clears its own latch.
+        # Both latches outlive their releases.
         self.inject("guard_stop=0")
         self.assert_active({"estop"})
-        self.assert_latched({"estop"})
+        self.assert_latched({"estop", "guard"})
         self.inject("emergency_stop=0")
         self.assert_active(set())
-        self.assert_latched(set())
+        self.assert_latched({"estop", "guard"})
         self.reactivate_and_park(proc_output, log)
 
     def test_unattributed_stop_raises_rsi(self, proc_output):

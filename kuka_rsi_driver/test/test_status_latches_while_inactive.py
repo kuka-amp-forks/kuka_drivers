@@ -47,7 +47,7 @@ class TestStatusLatchesWhileInactive(RsiFaultTestCase):
         self.inject(f"operation_mode={OP_MODE_EXT}")
 
     def latch_while_inactive(self, proc_output, datagram, slot, groups, clear):
-        """Inject a status while inactive, check the latch line names it, then clear it."""
+        """Inject a status while inactive, check the latch line names it, release it, activate."""
         log = LogCursor(proc_output)
         self.inject(datagram)
         match = log.wait_for_match(INACTIVE_LATCH_LINE, timeout=5)
@@ -57,15 +57,15 @@ class TestStatusLatchesWhileInactive(RsiFaultTestCase):
         self.assert_active({slot})
         self.assert_latched({slot})
 
-        # The flag still set is no new event: the latch holds without a second line, and the
-        # release clears it before any activation.
+        # The flag still set is no new event: the latch holds without a second line, and holds
+        # through the release until an activation succeeds.
         log = LogCursor(proc_output)
         self.inject("drives_powered=0")
         self.assertEqual(log.matches(INACTIVE_LATCH_LINE), [], "latched again on a held flag")
         self.assert_latched({slot})
         self.inject(clear)
         self.assert_active(set())
-        self.assert_latched(set())
+        self.assert_latched({slot})
 
         log = LogCursor(proc_output)
         self.resume_and_activate(log)

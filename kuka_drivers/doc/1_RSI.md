@@ -112,7 +112,7 @@ The `mxa_rsi` and `eki_rsi` hardware interfaces report why the arm cannot move t
 The latch rule:
 
 - `active` is the live signal, refreshed on every `read()` in every lifecycle state.
-- `latched` is set for every slot that is active at the instant the component leaves `active` on a fault, and for a new e-stop or guard stop while the component is `inactive`. It clears when the controller shows the release (the slot's `active` drops) or when an activation succeeds. `inhibitor/mode` never latches: the key switch is its own release.
+- `latched` is set for every slot that is active at the instant the component leaves `active` on a fault, and for a new e-stop or guard stop while the component is `inactive`. It holds while the component is `inactive`, after the slot's `active` drops too, and clears only when an activation succeeds. `inhibitor/mode` never latches: the key switch is its own release.
 - A guard stop reported while the driver's own stop is pending latches nothing: some controllers report the drives-off after a commanded deactivate as a guard stop. A commanded deactivate latches nothing, since the component leaves `active` before anything drops.
 - `operator_action` is the fixed per-slot property in the table.
 
