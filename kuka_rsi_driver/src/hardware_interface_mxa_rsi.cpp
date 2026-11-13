@@ -89,6 +89,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   mxa_config.mxa_client_port = std::stoi(info_.hardware_parameters.at("mxa_client_port"));
 
   mxa_loss_exported_ = false;
+  control_state_.status_manager.Invalidate();
   {
     std::lock_guard<std::mutex> lk{init_mtx_};
     init_report_ = {};

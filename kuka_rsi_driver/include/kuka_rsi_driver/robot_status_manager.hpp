@@ -119,6 +119,24 @@ public:
   {
     std::lock_guard<std::mutex> lck{status_mtx_};
     actual_status_interfaces_ = update;
+    status_pending_ = false;
+  }
+
+  // Drops the status of an earlier link; StatusPending() holds until the new link reports one.
+  void Invalidate()
+  {
+    kuka::external::control::kss::StatusUpdate reset;
+    reset.Reset();
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    actual_status_interfaces_ = reset;
+    status_interfaces_ = reset;
+    status_pending_ = true;
+  }
+
+  bool StatusPending()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_pending_;
   }
 
   void UpdateStateInterfaces()
@@ -190,6 +208,7 @@ private:
   StatusInterfaces status_interfaces_;         // Used as ROS 2 state interface
   StatusInterfaces actual_status_interfaces_;  // Stores actual state
   std::mutex status_mtx_;
+  bool status_pending_ = false;
   std::atomic<std::chrono::steady_clock::rep> last_telegram_ns_{0};
 };
 

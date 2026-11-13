@@ -351,6 +351,8 @@ protected:
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_CHECK_INTERVAL{10};
 
+  static constexpr std::chrono::milliseconds FIRST_STATUS_CHECK_INTERVAL{10};
+
   // Bounds on dropping the packets queued before an RSI start.
   static constexpr std::chrono::milliseconds DISCARD_RECEIVE_TIMEOUT{1};
   static constexpr uint64_t MAX_DISCARDED_PACKETS{1'000};
@@ -361,11 +363,13 @@ protected:
   static constexpr std::chrono::milliseconds DEFAULT_FIRST_PACKET_TIMEOUT{5'000};
   static constexpr std::chrono::milliseconds DEFAULT_STOP_PENDING_TIMEOUT{3'000};
   static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT{12};
+  static constexpr std::chrono::milliseconds DEFAULT_FIRST_STATUS_TIMEOUT{1'000};
   std::chrono::milliseconds configure_timeout_{DEFAULT_CONFIGURE_TIMEOUT};
   std::chrono::milliseconds drives_on_timeout_{DEFAULT_DRIVES_ON_TIMEOUT};
   std::chrono::milliseconds first_packet_timeout_{DEFAULT_FIRST_PACKET_TIMEOUT};
   std::chrono::milliseconds stop_pending_timeout_{DEFAULT_STOP_PENDING_TIMEOUT};
   std::chrono::milliseconds read_timeout_{DEFAULT_READ_TIMEOUT};
+  std::chrono::milliseconds first_status_timeout_{DEFAULT_FIRST_STATUS_TIMEOUT};
 
   // Fixed cycle time and control mode for this driver version.
   static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;

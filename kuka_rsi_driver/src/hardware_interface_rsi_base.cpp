@@ -914,6 +914,19 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   ResetDiagnostics();
   ResetFaultInjection();
 
+  const auto status_deadline = std::chrono::steady_clock::now() + first_status_timeout_;
+  while (control_state_.status_manager.StatusPending())
+  {
+    if (std::chrono::steady_clock::now() > status_deadline)
+    {
+      RCLCPP_ERROR(
+        logger_, "Activation failed: no controller status since configure within %ld ms",
+        static_cast<int64_t>(first_status_timeout_.count()));
+      return CallbackReturn::FAILURE;
+    }
+    std::this_thread::sleep_for(FIRST_STATUS_CHECK_INTERVAL);
+  }
+
   // The status arrives on the mxA thread; read() may not have copied it yet.
   control_state_.status_manager.UpdateStateInterfaces();
 
@@ -1364,7 +1377,9 @@ bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameters()
            "first_packet_timeout_ms", DEFAULT_FIRST_PACKET_TIMEOUT, first_packet_timeout_) &&
          ReadTimeoutParameter(
            "stop_pending_timeout_ms", DEFAULT_STOP_PENDING_TIMEOUT, stop_pending_timeout_) &&
-         ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_);
+         ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_) &&
+         ReadTimeoutParameter(
+           "first_status_timeout_ms", DEFAULT_FIRST_STATUS_TIMEOUT, first_status_timeout_);
 }
 
 bool KukaRSIHardwareInterfaceBase::ReadFaultInjectionParameter()
