@@ -46,6 +46,8 @@ public:
     motion_possible_ = static_cast<double>(update.motion_possible_);
     operation_mode_ = static_cast<double>(update.operation_mode_);
     robot_stopped_ = static_cast<double>(update.robot_stopped_);
+    brake_test_due_ = static_cast<double>(update.brake_test_requested_);
+    brake_test_warning_ = static_cast<double>(update.brake_test_warning_);
     return *this;
   }
 
@@ -61,7 +63,9 @@ public:
       {hardware_interface::IN_MOTION, &in_motion_},
       {hardware_interface::MOTION_POSSIBLE, &motion_possible_},
       {hardware_interface::OPERATION_MODE, &operation_mode_},
-      {hardware_interface::ROBOT_STOPPED, &robot_stopped_}};
+      {hardware_interface::ROBOT_STOPPED, &robot_stopped_},
+      {hardware_interface::BRAKE_TEST_DUE, &brake_test_due_},
+      {hardware_interface::BRAKE_TEST_WARNING, &brake_test_warning_}};
   }
 
   bool IsOperationModeExt()
@@ -77,6 +81,8 @@ public:
   bool IsMotionPossible() { return static_cast<bool>(motion_possible_); }
 
   bool IsGuardStopActive() { return static_cast<bool>(guard_stop_); }
+
+  bool IsBrakeTestDue() { return static_cast<bool>(brake_test_due_); }
 
   std::string Describe() const
   {
@@ -97,6 +103,8 @@ private:
   double motion_possible_ = 0.0;
   double operation_mode_ = 0.0;
   double robot_stopped_ = 0.0;
+  double brake_test_due_ = 0.0;
+  double brake_test_warning_ = 0.0;
 };
 
 class StatusManager
