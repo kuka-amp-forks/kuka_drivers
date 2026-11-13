@@ -74,6 +74,26 @@ Besides the parameters the launch arguments set (`controller_ip`, `client_ip`, `
 
 The first four apply to the `eki_rsi` and `mxa_rsi` hardware interfaces; `first_packet_timeout_ms` and `read_timeout_ms` also apply to `rsi_only`; `mxa_status_timeout_ms` applies to `mxa_rsi` only.
 
+### Status state interfaces
+
+The `mxa_rsi` and `eki_rsi` hardware interfaces export the controller status as plain state interfaces in the `state` group (prefixed like `state/server_state`), refreshed on every `read()` in every lifecycle state:
+
+| Interface | mxA source | `1` / value means |
+|---|---|---|
+| `state/emergency_stop` | `!ALARM_STOP` | an emergency stop is active |
+| `state/guard_stop` | `!USER_SAFE` | operator safety is violated, for example the light curtain |
+| `state/drives_powered` | `PERI_RDY` | the drives are powered |
+| `state/motion_possible` | `PRO_ACT` | the Automatic External process is active and motion is enabled |
+| `state/in_motion` | `PRO_MOVE` | the robot is moving |
+| `state/robot_stopped` | `ROB_STOPPED` | the robot is at standstill |
+| `state/operation_mode` | `T1`, `T2`, `AUT`, `EXT` | `1` T1, `2` T2, `3` AUT, `4` EXT, `0` unknown |
+| `state/control_mode`, `state/cycle_time` | the SDK's requested RSI mode and cycle time | `kuka_drivers_core::ControlMode`, `kuka::external::control::kss::CycleTime` |
+| `state/drive_fault` | the SDK's error event for mxA error 801 | the KRC has latched a stop message (`$STOPMESS`) |
+
+The `eki_rsi` interface fills the same flags from the EKI status. Every flag but `state/drive_fault` is live: it follows the controller and clears when the condition clears, so simultaneous causes read as several flags set at once. `state/drive_fault` is set from the SDK's error event for mxA error 801 in every lifecycle state. The SDK raises that event once when the error appears and never for its release, so the flag holds until the next successful activation; the KRC refuses an RSI start while the message stands, so a successful activation means the message was acknowledged. While the component is active, the same event also stops it (`stop_reason` `10`). The `rsi_only` interface exports `state/drive_fault` too, but has no mxA link to set it from.
+
+The Lyrical `joint_state_broadcaster` does not publish `state/*` interfaces; read them with a state-only `gpio_controllers/GpioCommandController` on gpio `state`, as the tests do (`test/config/stop_reason_broadcaster.yaml`).
+
 ### Stop reason
 
 The hardware interfaces export `state/stop_reason` (prefixed like `state/server_state`), a double that names why the component last left `active`:

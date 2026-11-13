@@ -53,6 +53,8 @@ static constexpr char GUARD_STOP[] = "guard_stop";
 static constexpr char IN_MOTION[] = "in_motion";
 static constexpr char MOTION_POSSIBLE[] = "motion_possible";
 static constexpr char STOP_REASON[] = "stop_reason";
+// A KRC stop message is latched ($STOPMESS, mxA error 801).
+static constexpr char DRIVE_FAULT[] = "drive_fault";
 
 /* FRI state interfaces */
 static constexpr char SESSION_STATE[] = "session_state";
