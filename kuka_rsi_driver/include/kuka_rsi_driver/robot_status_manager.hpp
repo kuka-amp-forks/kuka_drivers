@@ -194,9 +194,12 @@ public:
   // Called on the mxA thread for every received telegram, changed flags or not.
   void StampTelegram()
   {
+    telegrams_.fetch_add(1, std::memory_order_relaxed);
     last_telegram_ns_.store(
       std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
   }
+
+  uint64_t TelegramCount() const { return telegrams_.load(std::memory_order_relaxed); }
 
   std::chrono::nanoseconds TelegramAge() const
   {
@@ -210,6 +213,7 @@ private:
   std::mutex status_mtx_;
   bool status_pending_ = false;
   std::atomic<std::chrono::steady_clock::rep> last_telegram_ns_{0};
+  std::atomic<uint64_t> telegrams_{0};
 };
 
 }  // namespace kuka_rsi_driver

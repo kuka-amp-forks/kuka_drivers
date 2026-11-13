@@ -148,6 +148,16 @@ protected:
   // Exported: the test plugin's vtable needs it since the mxA class no longer overrides it.
   virtual KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout);
 
+  // Requests the drives on; false, with the cause logged, when it cannot by deadline.
+  virtual KUKA_RSI_DRIVER_PUBLIC bool RequestDrivesOn(std::chrono::steady_clock::time_point)
+  {
+    robot_ptr_->TurnOnDrives();
+    return true;
+  }
+
+  // Called when the drives did not come on in time.
+  virtual KUKA_RSI_DRIVER_PUBLIC void AbandonDrivesOn() {}
+
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
 
@@ -359,7 +369,7 @@ protected:
 
   // Timeouts from the *_timeout_ms hardware parameters.
   static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};
-  static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{3'000};
+  static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{5'000};
   static constexpr std::chrono::milliseconds DEFAULT_FIRST_PACKET_TIMEOUT{5'000};
   static constexpr std::chrono::milliseconds DEFAULT_STOP_PENDING_TIMEOUT{3'000};
   static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT{12};

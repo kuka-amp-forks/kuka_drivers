@@ -960,9 +960,12 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     RCLCPP_INFO(
       logger_, "Turning on drives, waiting up to %ld ms",
       static_cast<int64_t>(drives_on_timeout_.count()));
-    robot_ptr_->TurnOnDrives();
-
     const auto start_time = std::chrono::steady_clock::now();
+    if (!RequestDrivesOn(start_time + drives_on_timeout_))
+    {
+      AbandonDrivesOn();
+      return CallbackReturn::FAILURE;
+    }
     while (!control_state_.status_manager.DrivesPowered())
     {
       if (std::chrono::steady_clock::now() - start_time > drives_on_timeout_)
@@ -970,6 +973,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
         RCLCPP_ERROR(
           logger_, "Activation failed: drives not powered within %ld ms",
           static_cast<int64_t>(drives_on_timeout_.count()));
+        AbandonDrivesOn();
         return CallbackReturn::FAILURE;
       }
       std::this_thread::sleep_for(DRIVES_POWERED_CHECK_INTERVAL);

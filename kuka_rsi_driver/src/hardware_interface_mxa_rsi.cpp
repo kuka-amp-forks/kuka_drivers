@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <chrono>
 #include <regex>
 #include <thread>
@@ -302,6 +303,44 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
     static_cast<int>(emergency_stop_raised), static_cast<int>(latch_guard),
     static_cast<int>(update.emergency_stop_), static_cast<int>(update.guard_stop_));
 }
+
+bool KukaMxaRsiHardwareInterface::RequestDrivesOn(std::chrono::steady_clock::time_point deadline)
+{
+  auto & status = control_state_.status_manager;
+  int edges = 0;
+  while (std::chrono::steady_clock::now() < deadline)
+  {
+    // Drops only DRIVES_ON: the SDK keeps DRIVES_OFF released while PERI_RDY is 0.
+    robot_ptr_->TurnOffDrives();
+    const uint64_t low_from = status.TelegramCount();
+    while (status.TelegramCount() < low_from + 2 && std::chrono::steady_clock::now() < deadline)
+    {
+      std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
+    }
+    if (status.TelegramCount() < low_from + 2)
+    {
+      break;
+    }
+    robot_ptr_->TurnOnDrives();
+    ++edges;
+    const auto high_until = std::min(std::chrono::steady_clock::now() + DRIVES_ON_PULSE, deadline);
+    while (std::chrono::steady_clock::now() < high_until)
+    {
+      std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
+      status.UpdateStateInterfaces();
+      if (status.DrivesPowered())
+      {
+        return true;
+      }
+    }
+  }
+  RCLCPP_ERROR(
+    logger_, "Activation failed: drives not powered within %ld ms of %d DRIVES_ON edge(s)",
+    static_cast<int64_t>(drives_on_timeout_.count()), edges);
+  return false;
+}
+
+void KukaMxaRsiHardwareInterface::AbandonDrivesOn() { robot_ptr_->TurnOffDrives(); }
 
 void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)
 {
