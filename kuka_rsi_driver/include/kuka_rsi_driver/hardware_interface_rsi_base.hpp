@@ -182,6 +182,10 @@ protected:
   // Polled from read() while a stop is pending.
   KUKA_RSI_DRIVER_LOCAL void CheckStopComplete();
 
+  // Drops the RSI packets queued before the start request; false when one could not be answered
+  // or they keep arriving.
+  KUKA_RSI_DRIVER_LOCAL bool DiscardQueuedPackets();
+
   KUKA_RSI_DRIVER_LOCAL bool CheckJointInterfaces(
     const hardware_interface::ComponentInfo & joint) const;
 
@@ -318,6 +322,10 @@ protected:
   // Bound on the wait for a pending cancel before on_cleanup releases the client.
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_CHECK_INTERVAL{10};
+
+  // Bounds on dropping the packets queued before an RSI start.
+  static constexpr std::chrono::milliseconds DISCARD_RECEIVE_TIMEOUT{1};
+  static constexpr uint64_t MAX_DISCARDED_PACKETS{1'000};
 
   // Timeouts from the *_timeout_ms hardware parameters.
   static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};

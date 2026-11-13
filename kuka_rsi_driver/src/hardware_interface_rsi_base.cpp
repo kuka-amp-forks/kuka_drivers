@@ -953,6 +953,11 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     return CallbackReturn::FAILURE;
   }
 
+  if (!DiscardQueuedPackets())
+  {
+    return CallbackReturn::FAILURE;
+  }
+
   RCLCPP_INFO(
     logger_,
     "Starting joint position control at %.0f ms, waiting up to %ld ms for the first RSI packet",
@@ -1008,12 +1013,71 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   runtime_state_.is_active.store(true, std::memory_order_release);
 
   RCLCPP_INFO(
-    logger_, "Received position data from robot controller %.0f ms after the start request",
+    logger_,
+    "Received position data from robot controller %.0f ms after the start request, IPOC %lu",
     std::chrono::duration<double, std::milli>(
       diagnostics_state_.last_msg_received_time - start_request_time)
-      .count());
+      .count(),
+    diagnostics_state_.last_ipoc);
 
   return CallbackReturn::SUCCESS;
+}
+
+// The SDK takes a new packet only once the last one is answered, so each is answered with a hold.
+bool KukaRSIHardwareInterfaceBase::DiscardQueuedPackets()
+{
+  using kuka::external::control::ReturnCode;
+
+  const std::vector<double> zeros(info_.joints.size(), 0.0);
+  uint64_t discarded = 0;
+  uint64_t first_ipoc = 0;
+  while (discarded < MAX_DISCARDED_PACKETS &&
+         robot_ptr_->ReceiveMotionState(DISCARD_RECEIVE_TIMEOUT).return_code == ReturnCode::OK)
+  {
+    if (discarded++ == 0)
+    {
+      first_ipoc = robot_ptr_->getIpoc();
+    }
+    const auto & positions = robot_ptr_->GetLastMotionState().GetMeasuredPositions();
+    auto & control_signal = robot_ptr_->GetControlSignal();
+    control_signal.AddJointPositionValues(positions.cbegin(), positions.cend());
+    if (optional_interface_flags_.has_velocity_command_interface)
+    {
+      control_signal.AddVelocityValues(zeros.cbegin(), zeros.cend());
+    }
+    if (optional_interface_flags_.has_torque_command_interface)
+    {
+      control_signal.AddTorqueValues(zeros.cbegin(), zeros.cend());
+    }
+    control_signal.AddGPIOValues(
+      interface_data_.gpio_commands.cbegin(), interface_data_.gpio_commands.cend());
+    if (const auto status = robot_ptr_->SendControlSignal(); status.return_code != ReturnCode::OK)
+    {
+      RCLCPP_ERROR(
+        logger_, "Activation failed: answering a queued RSI packet, IPOC %lu, failed: %s",
+        robot_ptr_->getIpoc(), status.message);
+      robot_ptr_->ResetControlSignal();
+      return false;
+    }
+  }
+  robot_ptr_->ResetControlSignal();
+
+  if (discarded == MAX_DISCARDED_PACKETS)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "Activation failed: RSI packets still arriving after dropping %lu, IPOC %lu to %lu; an "
+      "earlier RSI program may still be running",
+      discarded, first_ipoc, robot_ptr_->getIpoc());
+    return false;
+  }
+  if (discarded > 0)
+  {
+    RCLCPP_WARN(
+      logger_, "Discarded %lu RSI packet(s) queued before the start request, IPOC %lu to %lu",
+      discarded, first_ipoc, robot_ptr_->getIpoc());
+  }
+  return true;
 }
 
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_lifecycle::State &)
