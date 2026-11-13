@@ -278,7 +278,7 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
     return;
   }
 
-  // A guard stop raised by our own stop request is the stop's own doing.
+  // Ours if a stop is pending; else a guard input or the KRC's own stop after an RSI fault.
   const bool latch_guard =
     guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed);
   if (!emergency_stop_raised && !latch_guard)
