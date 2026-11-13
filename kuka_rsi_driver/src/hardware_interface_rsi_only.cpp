@@ -46,6 +46,7 @@ CallbackReturn KukaRSIHardwareInterface::on_configure(const rclcpp_lifecycle::St
 CallbackReturn KukaRSIHardwareInterface::on_activate(const rclcpp_lifecycle::State &)
 {
   ResetDiagnostics();
+  ResetFaultInjection();
 
   RCLCPP_INFO(
     logger_, "Waiting up to %ld ms for the first RSI packet",

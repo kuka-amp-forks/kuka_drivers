@@ -41,6 +41,7 @@ from mxa_status_fake_support import (  # noqa: E402
     OP_MODE_EXT,
     SIMULATOR_READ_TIMEOUT_MS,
     LogCursor,
+    hardware_params,
     MxaStatusFakeTestCase,
     robot_description,
 )
@@ -140,6 +141,7 @@ def fault_launch_description(
     respawn_simulator=False,
     inactive_controllers=(),
     gpio_config="",
+    extra_params="",
 ):
     """
     control_node on the fake: JTC inactive; JSB, inhibitor and event broadcasters active.
@@ -148,10 +150,11 @@ def fault_launch_description(
     needs it respawned; it comes back silent, and resume_and_activate resumes it.
     inactive_controllers are (name, file in test/config) pairs, loaded inactive.
     gpio_config is a xacro file with the gpio_config macro; empty leaves the gpio empty.
+    extra_params are <param> elements added to the <hardware> block.
     """
     description = {
         "robot_description": robot_description(
-            read_timeout_ms=read_timeout_ms, gpio_config=gpio_config
+            extra_params=extra_params, read_timeout_ms=read_timeout_ms, gpio_config=gpio_config
         )
     }
 
@@ -430,4 +433,5 @@ __all__ = [
     "LogCursor",
     "RsiFaultTestCase",
     "fault_launch_description",
+    "hardware_params",
 ]

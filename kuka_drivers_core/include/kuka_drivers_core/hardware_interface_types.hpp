@@ -65,6 +65,10 @@ static constexpr char INHIBITOR_ACTIVE[] = "active";
 static constexpr char INHIBITOR_LATCHED[] = "latched";
 static constexpr char INHIBITOR_OPERATOR_ACTION[] = "operator_action";
 
+// Fault injection commands on the gpio component, exported only when fault_injection is true.
+static constexpr char STOP_REQUEST[] = "stop_request";
+static constexpr char RSI_MUTE_MS[] = "rsi_mute_ms";
+
 /* FRI state interfaces */
 static constexpr char SESSION_STATE[] = "session_state";
 static constexpr char CONNECTION_QUALITY[] = "connection_quality";

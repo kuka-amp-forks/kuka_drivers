@@ -72,6 +72,8 @@ Besides the parameters the launch arguments set (`controller_ip`, `client_ip`, `
 
 - `mxa_status_timeout_ms`: how old the newest mxA telegram may be before the `mxa_rsi` hardware interface treats the link as lost, in milliseconds (positive integer, defaults to 60). It must stay below the SDK's 100 ms mxA receive timeout, or `configure` is refused. Every received telegram is stamped on the mxA thread, changed flags or not, so an idle arm does not age past the bound. On expiry, in every state, `read()` first sets `server_state` to error for one cycle, so the event broadcaster publishes it and `robot_manager` learns of the loss. Then the component errors out (from `write()` while active, from the next `read()` while inactive, never through `DEACTIVATE`): it goes `unconfigured`, every controller with an interface on it is deactivated, and the mxA client is released. `configure` again to reconnect, then re-activate the state broadcasters.
 
+- `fault_injection`: `true` exports two test-only command interfaces on the `gpio` component, for exercising the stop and recovery paths (defaults to `false`, which exports neither). A rising edge on `gpio/stop_request` stops the component as a fault does, logged as `stop requested`, and raises and latches `inhibitor/rsi`, the slot of the driver's own stops. A new positive value N on `gpio/rsi_mute_ms` makes the driver take no RSI packet and send no reply for N ms while the component stays active and the mxA link stays up; then the driver latches the RSI receive failure itself and stops, raising and latching `inhibitor/rsi`. Both reset to `0` on activation. Set it only off the production cell, for example `<param name="fault_injection">true</param>`, and claim the interfaces with a `gpio_controllers/GpioCommandController`.
+
 The first four apply to the `eki_rsi` and `mxa_rsi` hardware interfaces; `first_packet_timeout_ms` and `read_timeout_ms` also apply to `rsi_only`; `mxa_status_timeout_ms` applies to `mxa_rsi` only.
 
 ### Status state interfaces
@@ -107,7 +109,7 @@ The `mxa_rsi` and `eki_rsi` hardware interfaces report why the arm cannot move t
 | `inhibitor/mode` | `state/operation_mode` is not `4` (EXT) | no | `1` (key switch) |
 | `inhibitor/drive_fault` | `state/drive_fault` | yes | `1` |
 | `inhibitor/brake_test` | `state/brake_test_due` | yes | `1` (iiQKA.UI only) |
-| `inhibitor/rsi` | the driver's own RSI stop: no RSI packet within `read_timeout_ms`, a failed send, or a stop no other slot explains; held until an activation succeeds | yes | `0` |
+| `inhibitor/rsi` | the driver's own RSI stop: no RSI packet within `read_timeout_ms`, a failed send, a stop requested through `gpio/stop_request` or `gpio/rsi_mute_ms` (`fault_injection` only), or a stop no other slot explains; held until an activation succeeds | yes | `0` |
 
 The latch rule:
 

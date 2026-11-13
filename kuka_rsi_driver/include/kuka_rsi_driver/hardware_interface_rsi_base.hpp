@@ -186,6 +186,18 @@ protected:
   // or they keep arriving.
   KUKA_RSI_DRIVER_LOCAL bool DiscardQueuedPackets();
 
+  // Reads the fault_injection hardware parameter; false when it is not a boolean.
+  KUKA_RSI_DRIVER_LOCAL bool ReadFaultInjectionParameter();
+
+  // Clears the fault injection commands; called at activation.
+  KUKA_RSI_DRIVER_LOCAL void ResetFaultInjection();
+
+  // Acts on a new gpio/stop_request or gpio/rsi_mute_ms command; called from write().
+  KUKA_RSI_DRIVER_LOCAL void ApplyFaultInjection();
+
+  // True while replies are withheld; latches the stop once the window has passed.
+  KUKA_RSI_DRIVER_LOCAL bool RsiMuted();
+
   KUKA_RSI_DRIVER_LOCAL bool CheckJointInterfaces(
     const hardware_interface::ComponentInfo & joint) const;
 
@@ -295,6 +307,21 @@ protected:
     StatusManager status_manager;
   };
 
+  // Test-only gpio commands, exported only when the fault_injection parameter is true.
+  struct FaultInjectionState
+  {
+    bool enabled = false;
+    double stop_request = 0.0;
+    double rsi_mute_ms = 0.0;
+    double last_stop_request = 0.0;
+    double last_rsi_mute_ms = 0.0;
+    hardware_interface::CommandInterface::SharedPtr stop_request_interface;
+    hardware_interface::CommandInterface::SharedPtr rsi_mute_ms_interface;
+    bool muted = false;
+    double mute_ms = 0.0;
+    std::chrono::steady_clock::time_point mute_until{};
+  };
+
   // Methods common for EKI and MXA version
   CallbackReturn extended_activation(const rclcpp_lifecycle::State &);
   CallbackReturn extended_deactivation(const rclcpp_lifecycle::State &);
@@ -314,6 +341,7 @@ protected:
   RuntimeState runtime_state_;
   DiagnosticsState diagnostics_state_;
   ControlState control_state_;
+  FaultInjectionState fault_injection_;
 
   static constexpr std::chrono::milliseconds IDLE_SLEEP_DURATION{2};
   static constexpr std::chrono::milliseconds INIT_WAIT_DURATION{100};

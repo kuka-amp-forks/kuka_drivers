@@ -192,7 +192,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     interface_prefix_ = it->second;
   }
 
-  if (!ReadTimeoutParameters())
+  if (!ReadTimeoutParameters() || !ReadFaultInjectionParameter())
   {
     return CallbackReturn::ERROR;
   }
@@ -280,6 +280,18 @@ KukaRSIHardwareInterfaceBase::on_export_command_interfaces()
     ExportCommand(
       command_interfaces, hardware_interface::IO_PREFIX, info_.gpios[0].command_interfaces[i].name,
       &interface_data_.gpio_commands[i]);
+  }
+
+  if (fault_injection_.enabled)
+  {
+    ExportCommand(
+      command_interfaces, hardware_interface::IO_PREFIX, hardware_interface::STOP_REQUEST,
+      &fault_injection_.stop_request);
+    fault_injection_.stop_request_interface = command_interfaces.back();
+    ExportCommand(
+      command_interfaces, hardware_interface::IO_PREFIX, hardware_interface::RSI_MUTE_MS,
+      &fault_injection_.rsi_mute_ms);
+    fault_injection_.rsi_mute_ms_interface = command_interfaces.back();
   }
 
   return command_interfaces;
@@ -392,6 +404,12 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     return return_type::OK;
   }
 
+  if (fault_injection_.enabled && RsiMuted())
+  {
+    PublishStates(false);
+    return return_type::OK;
+  }
+
   Read(read_timeout_.count());
   if (!runtime_state_.msg_received)
   {
@@ -410,6 +428,11 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
 // A latched stop sends nothing and takes the component to INACTIVE through on_deactivate.
 return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclcpp::Duration &)
 {
+  if (fault_injection_.enabled)
+  {
+    ApplyFaultInjection();
+  }
+
   if (event_state_.stop_reason.load() != kuka_drivers_core::StopReason::NONE)
   {
     LatchInhibitorsAtStop();
@@ -889,6 +912,7 @@ kuka::external::control::kss::GPIOConfiguration KukaRSIHardwareInterfaceBase::Pa
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_lifecycle::State &)
 {
   ResetDiagnostics();
+  ResetFaultInjection();
 
   // The status arrives on the mxA thread; read() may not have copied it yet.
   control_state_.status_manager.UpdateStateInterfaces();
@@ -1341,6 +1365,109 @@ bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameters()
          ReadTimeoutParameter(
            "stop_pending_timeout_ms", DEFAULT_STOP_PENDING_TIMEOUT, stop_pending_timeout_) &&
          ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_);
+}
+
+bool KukaRSIHardwareInterfaceBase::ReadFaultInjectionParameter()
+{
+  const auto it = info_.hardware_parameters.find("fault_injection");
+  if (it == info_.hardware_parameters.end() || it->second == "false" || it->second == "False")
+  {
+    return true;
+  }
+  if (it->second != "true" && it->second != "True")
+  {
+    RCLCPP_ERROR(logger_, "fault_injection must be true or false, got '%s'", it->second.c_str());
+    return false;
+  }
+  for (const auto & command : info_.gpios[0].command_interfaces)
+  {
+    if (
+      command.name == hardware_interface::STOP_REQUEST ||
+      command.name == hardware_interface::RSI_MUTE_MS)
+    {
+      RCLCPP_ERROR(
+        logger_, "fault_injection exports gpio/%s, which the gpio component already has",
+        command.name.c_str());
+      return false;
+    }
+  }
+  fault_injection_.enabled = true;
+  RCLCPP_WARN(
+    logger_, "Fault injection enabled: exporting gpio/%s and gpio/%s",
+    hardware_interface::STOP_REQUEST, hardware_interface::RSI_MUTE_MS);
+  return true;
+}
+
+void KukaRSIHardwareInterfaceBase::ResetFaultInjection()
+{
+  fault_injection_.stop_request = 0.0;
+  fault_injection_.rsi_mute_ms = 0.0;
+  fault_injection_.last_stop_request = 0.0;
+  fault_injection_.last_rsi_mute_ms = 0.0;
+  fault_injection_.muted = false;
+  // A controller holds no command after activation, so the handles would keep the old values.
+  if (fault_injection_.enabled)
+  {
+    std::ignore = fault_injection_.stop_request_interface->set_value(0.0, true);
+    std::ignore = fault_injection_.rsi_mute_ms_interface->set_value(0.0, true);
+  }
+}
+
+void KukaRSIHardwareInterfaceBase::ApplyFaultInjection()
+{
+  auto & fault = fault_injection_;
+  std::ignore = fault.stop_request_interface->get_value(fault.stop_request, false);
+  std::ignore = fault.rsi_mute_ms_interface->get_value(fault.rsi_mute_ms, false);
+
+  if (
+    fault.stop_request >= 0.5 && fault.last_stop_request < 0.5 &&
+    LatchStopReason(kuka_drivers_core::StopReason::REQUESTED))
+  {
+    // A stop of the driver's own, like an RSI fault: inhibitor/rsi, no operator action.
+    event_state_.rsi_fault.store(true, std::memory_order_relaxed);
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    RCLCPP_ERROR(
+      logger_, "Stopping: stop requested through gpio/%s", hardware_interface::STOP_REQUEST);
+  }
+  fault.last_stop_request = fault.stop_request;
+
+  // The window opens after this cycle's reply, so no packet is left waiting for one.
+  if (fault.rsi_mute_ms >= 1.0 && fault.rsi_mute_ms != fault.last_rsi_mute_ms && !fault.muted)
+  {
+    fault.muted = true;
+    fault.mute_ms = fault.rsi_mute_ms;
+    fault.mute_until = std::chrono::steady_clock::now() +
+                       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                         std::chrono::duration<double, std::milli>(fault.mute_ms));
+    RCLCPP_WARN(
+      logger_, "Withholding RSI replies for %.0f ms after IPOC %lu", fault.mute_ms,
+      diagnostics_state_.last_ipoc);
+  }
+  fault.last_rsi_mute_ms = fault.rsi_mute_ms;
+}
+
+bool KukaRSIHardwareInterfaceBase::RsiMuted()
+{
+  if (!fault_injection_.muted)
+  {
+    return false;
+  }
+  runtime_state_.msg_received = false;
+  if (std::chrono::steady_clock::now() < fault_injection_.mute_until)
+  {
+    std::this_thread::sleep_for(IDLE_SLEEP_DURATION);
+    return true;
+  }
+  fault_injection_.muted = false;
+  event_state_.rsi_fault.store(true, std::memory_order_relaxed);
+  if (LatchStopReason(kuka_drivers_core::StopReason::RSI_RECEIVE_FAILED))
+  {
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    RCLCPP_ERROR(
+      logger_, "Stopping: RSI replies withheld for %.0f ms through gpio/%s",
+      fault_injection_.mute_ms, hardware_interface::RSI_MUTE_MS);
+  }
+  return true;
 }
 
 bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameter(

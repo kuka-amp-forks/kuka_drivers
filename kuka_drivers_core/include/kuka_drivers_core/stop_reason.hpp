@@ -35,7 +35,8 @@ enum class StopReason : std::uint8_t
   NOT_IN_EXT = 7,
   MXA_CONNECTION_LOST = 8,
   CONTROL_STOPPED = 9,
-  CONTROL_ERROR = 10
+  CONTROL_ERROR = 10,
+  REQUESTED = 11
 };
 
 inline const char * StopReasonName(StopReason reason)
@@ -64,6 +65,8 @@ inline const char * StopReasonName(StopReason reason)
       return "external control stopped";
     case StopReason::CONTROL_ERROR:
       return "external control error";
+    case StopReason::REQUESTED:
+      return "stop requested";
   }
   return "unknown";
 }
