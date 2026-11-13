@@ -52,13 +52,18 @@ static constexpr char EMERGENCY_STOP[] = "emergency_stop";
 static constexpr char GUARD_STOP[] = "guard_stop";
 static constexpr char IN_MOTION[] = "in_motion";
 static constexpr char MOTION_POSSIBLE[] = "motion_possible";
-static constexpr char STOP_REASON[] = "stop_reason";
 // A KRC stop message is latched ($STOPMESS, mxA error 801).
 static constexpr char DRIVE_FAULT[] = "drive_fault";
 // The controller requests a brake test (mxA BRAKETEST_REQ_INT).
 static constexpr char BRAKE_TEST_DUE[] = "brake_test_due";
 // mxA BRAKETEST_WARN.
 static constexpr char BRAKE_TEST_WARNING[] = "brake_test_warning";
+
+/* Inhibitor slots: gpio groups inhibitor/<slot>, each with the three interfaces below */
+static constexpr char INHIBITOR_PREFIX[] = "inhibitor";
+static constexpr char INHIBITOR_ACTIVE[] = "active";
+static constexpr char INHIBITOR_LATCHED[] = "latched";
+static constexpr char INHIBITOR_OPERATOR_ACTION[] = "operator_action";
 
 /* FRI state interfaces */
 static constexpr char SESSION_STATE[] = "session_state";

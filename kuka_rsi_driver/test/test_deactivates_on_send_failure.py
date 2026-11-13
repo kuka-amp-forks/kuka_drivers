@@ -27,7 +27,6 @@ from mxa_status_fake_support import DEACTIVATION_LINE  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
     HARDWARE_EVENT_ERROR,
     SEND_FAILURE_LINE,
-    STOP_REASON_RSI_SEND_FAILED,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -57,7 +56,7 @@ class TestDeactivatesOnSendFailure(RsiFaultTestCase):
             self._spin_until(lambda: HARDWARE_EVENT_ERROR in self.hardware_events, timeout=5),
             f"no error event on the event broadcaster, saw {self.hardware_events}",
         )
-        self.assert_stopped(log, STOP_REASON_RSI_SEND_FAILED)
+        self.assert_stopped(log, {"rsi"})
         self.assertFalse(log.wait_for("Quitting control loop", timeout=0.1), "control loop died")
 
         # The pending request is answered with the stop packet, nothing else.
