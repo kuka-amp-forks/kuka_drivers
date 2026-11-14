@@ -38,6 +38,7 @@ namespace kuka_rsi_driver
 // with a loopback UDP socket that tests write status updates to, one text datagram each.
 // Like the KRC, the modelled sender keeps a 10 ms telegram clock whether or not this process runs.
 //   "<field>=<int> ..."  fields of kss::StatusUpdate, e.g. "emergency_stop=1 operation_mode=4"
+//                        or "brake_test_requested=1 brake_test_warning=0"
 //   "freeze_status" / "unfreeze_status"  withhold or restart status delivery, not the telegrams
 //   "link_down" / "link_up"  stop or restart the telegram stream itself; released with the
 //                        link down, the fake raises the SDK's receive-timeout OnError

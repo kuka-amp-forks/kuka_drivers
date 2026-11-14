@@ -27,7 +27,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rsi_fault_support import (  # noqa: E402
     RECEIVE_FAILURE_LINE,
     SIMULATOR_READ_TIMEOUT_MS,
-    STOP_REASON_RSI_RECEIVE_FAILED,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -62,7 +61,7 @@ class TestDeactivatesOnReceiveFailure(RsiFaultTestCase):
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
         resumed_ipoc = min(i for i in self.state_ipocs if i > latched_ipoc)
         self.assertEqual(resumed_ipoc - latched_ipoc, DROPPED_PACKETS + 1)
-        self.assert_stopped(log, STOP_REASON_RSI_RECEIVE_FAILED)
+        self.assert_stopped(log, {"rsi"})
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
 
 

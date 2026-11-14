@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""stop_reason holds the cause through INACTIVE and a refused activation; success resets it."""
+"""A latched slot holds through INACTIVE and its cause's release until an activation succeeds."""
 
 import os
 import sys
@@ -28,8 +28,7 @@ from mxa_status_fake_support import OP_MODE_T1  # noqa: E402
 from rsi_fault_support import (  # noqa: E402
     JTC,
     RECEIVE_FAILURE_LINE,
-    STOP_REASON_NONE,
-    STOP_REASON_RSI_RECEIVE_FAILED,
+    STATUS_STOP_LINE,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -42,38 +41,69 @@ SILENCE_PACKETS = 100000
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
 def generate_test_description():
-    return fault_launch_description()
+    return fault_launch_description(respawn_simulator=True)
 
 
-class TestStopReasonHeldUntilActivate(RsiFaultTestCase):
-    def test_stop_reason_held_until_activate(self, proc_output, proc_info):
+class TestInhibitorLatchedUntilActivate(RsiFaultTestCase):
+    def park(self, log):
+        """Deactivate, check nothing latched, and wait out the simulator's respawn."""
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.assert_latched(set())
+        self.wait_for_simulator_respawn(log)
+
+    def test_estop_latch_holds_after_release(self, proc_output):
+        log = LogCursor(proc_output)
+        self.start_streaming(log)
+
+        log = LogCursor(proc_output)
+        self.inject("emergency_stop=1")
+        self.assertIsNotNone(log.wait_for_match(STATUS_STOP_LINE, timeout=5), "no stop line")
+        self.assert_stopped(log, {"estop"})
+        self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
+        self.wait_for_simulator_respawn(log)
+
+        # Released while INACTIVE, the slot stays latched until an activation succeeds.
+        self.inject("emergency_stop=0")
+        self.assert_active(set())
+        self.assert_latched({"estop"})
+
+        log = LogCursor(proc_output)
+        self.resume_and_activate(log)
+        self.assert_active(set())
+        self.assert_latched(set())
+        self.park(log)
+
+    def test_inhibitor_latched_until_activate(self, proc_output):
         log = LogCursor(proc_output)
         self.start_streaming(log)
 
         log = LogCursor(proc_output)
         self.set_simulator_fault("fault_dropped_packet_count", SILENCE_PACKETS)
         self.assertIsNotNone(log.wait_for_match(RECEIVE_FAILURE_LINE, timeout=5), "no stop line")
-        self.assert_stopped(log, STOP_REASON_RSI_RECEIVE_FAILED)
+        self.assert_stopped(log, {"rsi"})
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self._spin_for(1.0)
-        self.assertEqual(self.stop_reason(), STOP_REASON_RSI_RECEIVE_FAILED)
+        self.assert_active({"rsi"})
+        self.assert_latched({"rsi"})
 
-        # A refused activation keeps the cause.
+        # A refused activation keeps the latch; the key switch shows live beside it.
         log = LogCursor(proc_output)
         self.inject(f"operation_mode={OP_MODE_T1}")
         self.assertFalse(self.set_component_state(State.PRIMARY_STATE_ACTIVE), "activated in T1")
         self.assertTrue(log.wait_for("Activation failed: KRC not in EXT", timeout=5))
-        self.assertEqual(self.stop_reason(), STOP_REASON_RSI_RECEIVE_FAILED)
+        self.assert_active({"mode", "rsi"})
+        self.assert_latched({"rsi"})
 
-        # A successful one resets it, and it stays 0 through a normal deactivate.
+        # A successful one clears it, and a normal deactivate latches nothing.
         log = LogCursor(proc_output)
         self.resume_and_activate(log)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_active(set())
+        self.assert_latched(set())
         self.switch(activate=[JTC])
         self.move_joint_and_wait()
         self.switch(deactivate=[JTC])
-        self.deactivate_and_wait_for_simulator(proc_info)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.park(log)
 
 
 @launch_testing.post_shutdown_test()

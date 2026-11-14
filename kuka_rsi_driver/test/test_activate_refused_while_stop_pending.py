@@ -74,6 +74,9 @@ class TestActivateRefusedWhileStopPending(MxaStatusFakeTestCase):
     def finish(self, log):
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for(STOP_COMPLETE_LINE, timeout=5), "stop never completed")
+        # The stop packet ended the simulator; a launch shutdown that lands while the respawn is
+        # still importing exits it with -2.
+        self.wait_for_simulator_respawn(log)
 
     def test_activate_refused_while_stop_pending(self, proc_output):
         log = LogCursor(proc_output)

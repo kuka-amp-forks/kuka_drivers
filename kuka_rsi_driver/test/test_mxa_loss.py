@@ -32,9 +32,7 @@ from rsi_fault_support import (  # noqa: E402
     MXA_LOSS_LINE,
     MXA_RELEASED_LINE,
     RECEIVE_FAILURE_LINE,
-    STOP_REASON_BROADCASTER,
-    STOP_REASON_MXA_CONNECTION_LOST,
-    STOP_REASON_NONE,
+    INHIBITOR_BROADCASTER,
     LogCursor,
     RsiFaultTestCase,
     fault_launch_description,
@@ -76,7 +74,7 @@ class TestMxaLoss(RsiFaultTestCase):
     def prepare_for_loss(self):
         """Start from INACTIVE with the broadcasters active, whatever an earlier test left."""
         self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
-        self.ensure_controllers_active(JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER)
+        self.ensure_controllers_active(JSB, INHIBITOR_BROADCASTER, EVENT_BROADCASTER)
 
     def test_loss_while_active_errors_to_unconfigured(self, proc_output):
         log = LogCursor(proc_output)
@@ -93,18 +91,18 @@ class TestMxaLoss(RsiFaultTestCase):
         self.wait_for_component_state(State.PRIMARY_STATE_UNCONFIGURED)
         self.assertEqual(self.controller_state(JTC), "inactive")
         self.assertEqual(self.controller_state(JSB), "inactive")
-        self.assertEqual(self.controller_state(STOP_REASON_BROADCASTER), "inactive")
+        self.assertEqual(self.controller_state(INHIBITOR_BROADCASTER), "inactive")
         self.assertEqual(log.matches(RECEIVE_FAILURE_LINE), [], "RSI blamed for the mxA loss")
 
-        # A reconfigure reconnects; stop_reason reads the loss until activation succeeds.
+        # A reconfigure reconnects; the loss has no slot, so nothing reads latched.
         log = LogCursor(proc_output)
         self.inject("link_up")
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
-        self.switch(activate=[JSB, STOP_REASON_BROADCASTER])
-        self.assertEqual(self.stop_reason(), STOP_REASON_MXA_CONNECTION_LOST)
+        self.switch(activate=[JSB, INHIBITOR_BROADCASTER])
+        self.assert_latched(set())
         self.resume_and_activate(log)
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_latched(set())
         self.switch(activate=[JTC])
         self.move_joint_and_wait()
 
@@ -128,7 +126,7 @@ class TestMxaLoss(RsiFaultTestCase):
 
         self.inject("link_up")
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
-        self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
+        self.switch(activate=[JSB, INHIBITOR_BROADCASTER, EVENT_BROADCASTER])
 
     def test_loss_while_inactive_publishes_error_event(self, proc_output):
         log = LogCursor(proc_output)
@@ -139,9 +137,9 @@ class TestMxaLoss(RsiFaultTestCase):
         self.assertTrue(log.wait_for("Stop complete", timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)
 
-        # A first loss, then a second one after the reconfigure, with stop_reason still at 8.
-        for held in (STOP_REASON_NONE, STOP_REASON_MXA_CONNECTION_LOST):
-            self.assertEqual(self.stop_reason(), held)
+        # A first loss, then a second one after the reconfigure; neither latches a slot.
+        for _ in range(2):
+            self.assert_latched(set())
             log = LogCursor(proc_output)
             self.hardware_events.clear()
             self.inject("link_down")
@@ -149,7 +147,7 @@ class TestMxaLoss(RsiFaultTestCase):
 
             self.inject("link_up")
             self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "reconfigure")
-            self.switch(activate=[JSB, STOP_REASON_BROADCASTER, EVENT_BROADCASTER])
+            self.switch(activate=[JSB, INHIBITOR_BROADCASTER, EVENT_BROADCASTER])
 
     def test_unchanged_status_does_not_error(self, proc_output):
         log = LogCursor(proc_output)
@@ -161,7 +159,7 @@ class TestMxaLoss(RsiFaultTestCase):
         self._spin_for(UNCHANGED_S)
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
         self.assertIsNone(log.wait_for_match(MXA_LOSS_LINE, timeout=0.1), "idle stream errored")
-        self.assertEqual(self.stop_reason(), STOP_REASON_NONE)
+        self.assert_latched(set())
 
         self.inject("unfreeze_status")
         self.switch(deactivate=[JTC])

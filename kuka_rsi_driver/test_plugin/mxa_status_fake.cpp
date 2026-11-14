@@ -397,6 +397,14 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   {
     status_.robot_stopped_ = flag;
   }
+  else if (key == "brake_test_requested")
+  {
+    status_.brake_test_requested_ = flag;
+  }
+  else if (key == "brake_test_warning")
+  {
+    status_.brake_test_warning_ = flag;
+  }
   else
   {
     return false;
@@ -426,16 +434,7 @@ void MxaStatusFake::Dispatch()
   {
     return;
   }
-  const bool changed =
-    std::tie(
-      status_.control_mode_, status_.cycle_time_, status_.drives_powered_, status_.emergency_stop_,
-      status_.guard_stop_, status_.in_motion_, status_.motion_possible_, status_.operation_mode_,
-      status_.robot_stopped_) !=
-    std::tie(
-      delivered_.control_mode_, delivered_.cycle_time_, delivered_.drives_powered_,
-      delivered_.emergency_stop_, delivered_.guard_stop_, delivered_.in_motion_,
-      delivered_.motion_possible_, delivered_.operation_mode_, delivered_.robot_stopped_);
-  if (!changed)
+  if (status_ == delivered_)
   {
     return;
   }

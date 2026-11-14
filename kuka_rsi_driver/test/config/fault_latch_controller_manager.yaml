@@ -15,7 +15,7 @@
       type: joint_trajectory_controller/JointTrajectoryController
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
-    stop_reason_broadcaster:
+    inhibitor_broadcaster:
       type: gpio_controllers/GpioCommandController
     event_broadcaster:
       type: kuka_controllers/EventBroadcaster
