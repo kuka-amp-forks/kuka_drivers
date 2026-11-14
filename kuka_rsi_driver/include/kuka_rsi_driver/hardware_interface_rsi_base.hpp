@@ -273,9 +273,8 @@ protected:
   {
     double server_state =
       static_cast<double>(kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED);
-    kuka_drivers_core::HardwareEvent last_event =
-      kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED;
-    std::mutex event_mutex;
+    std::atomic<kuka_drivers_core::HardwareEvent> last_event{
+      kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED};
     // The cause logged at the stop; held through INACTIVE, reset by a successful activation.
     std::atomic<kuka_drivers_core::StopReason> stop_reason{kuka_drivers_core::StopReason::NONE};
     // The KRC's stop message, set from the SDK's error event; the SDK reports no release, so it
