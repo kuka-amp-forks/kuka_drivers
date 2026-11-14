@@ -36,23 +36,18 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cpu_spin_support import (  # noqa: E402
+    MEASURE_SECONDS,
+    SPIN_THRESHOLD_PERCENT,
+    measure_cpu_percent as _measure_cpu_percent,
+)
 from joint_move_test_case import JointMoveTestCase  # noqa: E402
 
 COMPONENT = "kr6_r700_2"
 
-# A sleeping or blocking loop stays far below one core; a spinning loop pegs one.
-# Wide margin on both sides so CI noise cannot flip the verdict.
-SPIN_THRESHOLD_PERCENT = 50.0
-MEASURE_SECONDS = 1.5
-
 
 def _config(name):
     return os.path.join(get_package_share_directory("kuka_rsi_driver"), "config", name)
-
-
-def _measure_cpu_percent(pid, seconds=MEASURE_SECONDS):
-    # Blocks for `seconds`; percent is relative to a single core (100 == one core busy).
-    return psutil.Process(pid).cpu_percent(interval=seconds)
 
 
 def _spin_forever():
