@@ -126,6 +126,10 @@ class TestExportsStatusStateInterfaces(RsiFaultTestCase):
         states = [i.name for i in result.state_interfaces]
         for name in STATUS_INTERFACES:
             self.assertTrue(f"state/{name}" in states, f"state/{name} not exported: {states}")
+        # Without the fault_injection parameter no fault injection command is exported.
+        commands = [i.name for i in result.command_interfaces]
+        self.assertTrue("joint_1/position" in commands, commands)
+        self.assertEqual([c for c in commands if c.startswith("gpio/")], [], commands)
 
         # Live, not latched: the flags the component does not stop on while INACTIVE follow the
         # fake both ways.

@@ -167,14 +167,75 @@ bool MxaStatusFake::IsStatusTelegramPending() const
   return !link_down_ && std::chrono::steady_clock::now() - last_delivery_ >= kTelegramPeriod;
 }
 
+// Like the KRC: a drives-on request starts the release of a held Normal Stop, and only a DRIVES_ON
+// rising edge switches on, not while operator safety or the e-stop is open.
 MxaStatusFake::Status MxaStatusFake::TurnOnDrives()
 {
-  SetDrivesPowered(true);
+  bool edge = false;
+  bool flash = false;
+  {
+    std::lock_guard<std::mutex> lk{mtx_};
+    edge = !drives_on_input_;
+    drives_on_input_ = true;
+    if (normal_stop_held_ && normal_stop_until_ == std::chrono::steady_clock::time_point{})
+    {
+      normal_stop_until_ =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(normal_stop_release_ms_);
+      RCLCPP_INFO(
+        logger_, "mxA status fake: drives-on requested, normal stop released in %d ms",
+        normal_stop_release_ms_);
+      // With transient_peri set, a request soon after the drives-off flashes PERI_RDY while the
+      // Normal Stop still holds, as the KRC did on fast power cycles.
+      if (
+        transient_peri_ && std::chrono::steady_clock::now() - drives_off_time_ <
+                             std::chrono::milliseconds(kTransientPeriWindowMs))
+      {
+        status_.drives_powered_ = true;
+        transient_peri_until_ =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(kTransientPeriMs);
+        flash = true;
+        RCLCPP_INFO(logger_, "mxA status fake: PERI_RDY flash with guard_stop=1");
+      }
+    }
+    if (edge && (status_.guard_stop_ || status_.emergency_stop_))
+    {
+      RCLCPP_INFO(
+        logger_, "mxA status fake: DRIVES_ON edge ignored (guard_stop=%d emergency_stop=%d)",
+        status_.guard_stop_ ? 1 : 0, status_.emergency_stop_ ? 1 : 0);
+      edge = false;
+    }
+    else if (!edge)
+    {
+      RCLCPP_INFO(logger_, "mxA status fake: DRIVES_ON already high, no edge");
+    }
+  }
+  if (edge)
+  {
+    SetDrivesPowered(true);
+  }
+  else if (flash)
+  {
+    Dispatch();
+  }
   return {ReturnCode::OK};
 }
 
+// With normal_stop set, a drives-off from powered raises guard_stop and holds it, as the KRC's own
+// Normal Stop does, until a drives-on request releases it.
 MxaStatusFake::Status MxaStatusFake::TurnOffDrives()
 {
+  {
+    std::lock_guard<std::mutex> lk{mtx_};
+    drives_on_input_ = false;
+    if (status_.drives_powered_ && !drives_stuck_ && normal_stop_)
+    {
+      status_.guard_stop_ = true;
+      normal_stop_held_ = true;
+      normal_stop_until_ = {};
+      drives_off_time_ = std::chrono::steady_clock::now();
+      RCLCPP_INFO(logger_, "mxA status fake: normal stop held");
+    }
+  }
   SetDrivesPowered(false);
   return {ReturnCode::OK};
 }
@@ -241,6 +302,39 @@ void MxaStatusFake::Serve()
     {
       std::this_thread::sleep_until(stall_until);
       RCLCPP_INFO(logger_, "mxA status fake: receive resumed");
+    }
+
+    bool normal_stop_over = false;
+    bool flash_over = false;
+    {
+      std::lock_guard<std::mutex> lk{mtx_};
+      if (
+        transient_peri_until_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::steady_clock::now() >= transient_peri_until_)
+      {
+        transient_peri_until_ = {};
+        status_.drives_powered_ = false;
+        flash_over = true;
+      }
+      if (
+        normal_stop_until_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::steady_clock::now() >= normal_stop_until_)
+      {
+        normal_stop_until_ = {};
+        normal_stop_held_ = false;
+        status_.guard_stop_ = false;
+        normal_stop_over = true;
+      }
+    }
+    if (flash_over)
+    {
+      RCLCPP_INFO(logger_, "mxA status fake: PERI_RDY flash over, drives_powered=0");
+      Dispatch();
+    }
+    if (normal_stop_over)
+    {
+      RCLCPP_INFO(logger_, "mxA status fake: normal stop over, guard_stop=0");
+      Dispatch();
     }
 
     std::lock_guard<std::mutex> lk{mtx_};
@@ -352,6 +446,18 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   {
     stall_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(number);
     RCLCPP_INFO(logger_, "mxA status fake: receive stalled for %d ms", number);
+  }
+  else if (key == "normal_stop")
+  {
+    normal_stop_ = flag;
+  }
+  else if (key == "transient_peri")
+  {
+    transient_peri_ = flag;
+  }
+  else if (key == "normal_stop_release_ms")
+  {
+    normal_stop_release_ms_ = number;
   }
   else if (key == "drives_stuck")
   {

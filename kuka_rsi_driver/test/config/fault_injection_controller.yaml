@@ -1,0 +1,11 @@
+# Test-only: claims the fault injection commands the fault_injection parameter exports.
+/**/fault_injection_controller:
+  ros__parameters:
+    type: gpio_controllers/GpioCommandController
+    gpios:
+      - gpio
+    command_interfaces:
+      gpio:
+        interfaces:
+          - stop_request
+          - rsi_mute_ms

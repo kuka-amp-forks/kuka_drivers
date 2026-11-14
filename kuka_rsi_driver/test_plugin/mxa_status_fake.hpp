@@ -105,6 +105,17 @@ private:
   bool link_down_ = false;
   bool connected_ = false;
   bool drives_stuck_ = false;
+  // The DRIVES_ON bit last written; the KRC acts on its rising edge only.
+  bool drives_on_input_ = false;
+  bool normal_stop_ = false;
+  int normal_stop_release_ms_ = 1900;
+  bool normal_stop_held_ = false;
+  bool transient_peri_ = false;
+  std::chrono::steady_clock::time_point drives_off_time_{};
+  std::chrono::steady_clock::time_point transient_peri_until_{};
+  static constexpr int kTransientPeriWindowMs = 1500;
+  static constexpr int kTransientPeriMs = 50;
+  std::chrono::steady_clock::time_point normal_stop_until_{};
   uint64_t telegrams_ = 0;
   std::chrono::steady_clock::time_point last_delivery_{};
   std::chrono::steady_clock::time_point stall_until_{};

@@ -192,7 +192,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     interface_prefix_ = it->second;
   }
 
-  if (!ReadTimeoutParameters())
+  if (!ReadTimeoutParameters() || !ReadFaultInjectionParameter())
   {
     return CallbackReturn::ERROR;
   }
@@ -280,6 +280,18 @@ KukaRSIHardwareInterfaceBase::on_export_command_interfaces()
     ExportCommand(
       command_interfaces, hardware_interface::IO_PREFIX, info_.gpios[0].command_interfaces[i].name,
       &interface_data_.gpio_commands[i]);
+  }
+
+  if (fault_injection_.enabled)
+  {
+    ExportCommand(
+      command_interfaces, hardware_interface::IO_PREFIX, hardware_interface::STOP_REQUEST,
+      &fault_injection_.stop_request);
+    fault_injection_.stop_request_interface = command_interfaces.back();
+    ExportCommand(
+      command_interfaces, hardware_interface::IO_PREFIX, hardware_interface::RSI_MUTE_MS,
+      &fault_injection_.rsi_mute_ms);
+    fault_injection_.rsi_mute_ms_interface = command_interfaces.back();
   }
 
   return command_interfaces;
@@ -392,6 +404,12 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
     return return_type::OK;
   }
 
+  if (fault_injection_.enabled && RsiMuted())
+  {
+    PublishStates(false);
+    return return_type::OK;
+  }
+
   Read(read_timeout_.count());
   if (!runtime_state_.msg_received)
   {
@@ -410,6 +428,11 @@ return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcp
 // A latched stop sends nothing and takes the component to INACTIVE through on_deactivate.
 return_type KukaRSIHardwareInterfaceBase::write(const rclcpp::Time &, const rclcpp::Duration &)
 {
+  if (fault_injection_.enabled)
+  {
+    ApplyFaultInjection();
+  }
+
   if (event_state_.stop_reason.load() != kuka_drivers_core::StopReason::NONE)
   {
     LatchInhibitorsAtStop();
@@ -889,6 +912,20 @@ kuka::external::control::kss::GPIOConfiguration KukaRSIHardwareInterfaceBase::Pa
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_lifecycle::State &)
 {
   ResetDiagnostics();
+  ResetFaultInjection();
+
+  const auto status_deadline = std::chrono::steady_clock::now() + first_status_timeout_;
+  while (control_state_.status_manager.StatusPending())
+  {
+    if (std::chrono::steady_clock::now() > status_deadline)
+    {
+      RCLCPP_ERROR(
+        logger_, "Activation failed: no controller status since configure within %ld ms",
+        static_cast<int64_t>(first_status_timeout_.count()));
+      return CallbackReturn::FAILURE;
+    }
+    std::this_thread::sleep_for(FIRST_STATUS_CHECK_INTERVAL);
+  }
 
   // The status arrives on the mxA thread; read() may not have copied it yet.
   control_state_.status_manager.UpdateStateInterfaces();
@@ -918,21 +955,25 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     return CallbackReturn::FAILURE;
   }
 
-  if (!control_state_.status_manager.DrivesPowered())
+  if (!DrivesOn())
   {
     RCLCPP_INFO(
       logger_, "Turning on drives, waiting up to %ld ms",
       static_cast<int64_t>(drives_on_timeout_.count()));
-    robot_ptr_->TurnOnDrives();
-
     const auto start_time = std::chrono::steady_clock::now();
-    while (!control_state_.status_manager.DrivesPowered())
+    if (!RequestDrivesOn(start_time + drives_on_timeout_))
+    {
+      AbandonDrivesOn();
+      return CallbackReturn::FAILURE;
+    }
+    while (!DrivesOn())
     {
       if (std::chrono::steady_clock::now() - start_time > drives_on_timeout_)
       {
         RCLCPP_ERROR(
           logger_, "Activation failed: drives not powered within %ld ms",
           static_cast<int64_t>(drives_on_timeout_.count()));
+        AbandonDrivesOn();
         return CallbackReturn::FAILURE;
       }
       std::this_thread::sleep_for(DRIVES_POWERED_CHECK_INTERVAL);
@@ -950,6 +991,11 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
       cycle_status.return_code != kuka::external::control::ReturnCode::OK)
   {
     RCLCPP_ERROR(logger_, "Setting the RSI cycle time failed: %s", cycle_status.message);
+    return CallbackReturn::FAILURE;
+  }
+
+  if (!DiscardQueuedPackets())
+  {
     return CallbackReturn::FAILURE;
   }
 
@@ -1008,12 +1054,71 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
   runtime_state_.is_active.store(true, std::memory_order_release);
 
   RCLCPP_INFO(
-    logger_, "Received position data from robot controller %.0f ms after the start request",
+    logger_,
+    "Received position data from robot controller %.0f ms after the start request, IPOC %lu",
     std::chrono::duration<double, std::milli>(
       diagnostics_state_.last_msg_received_time - start_request_time)
-      .count());
+      .count(),
+    diagnostics_state_.last_ipoc);
 
   return CallbackReturn::SUCCESS;
+}
+
+// The SDK takes a new packet only once the last one is answered, so each is answered with a hold.
+bool KukaRSIHardwareInterfaceBase::DiscardQueuedPackets()
+{
+  using kuka::external::control::ReturnCode;
+
+  const std::vector<double> zeros(info_.joints.size(), 0.0);
+  uint64_t discarded = 0;
+  uint64_t first_ipoc = 0;
+  while (discarded < MAX_DISCARDED_PACKETS &&
+         robot_ptr_->ReceiveMotionState(DISCARD_RECEIVE_TIMEOUT).return_code == ReturnCode::OK)
+  {
+    if (discarded++ == 0)
+    {
+      first_ipoc = robot_ptr_->getIpoc();
+    }
+    const auto & positions = robot_ptr_->GetLastMotionState().GetMeasuredPositions();
+    auto & control_signal = robot_ptr_->GetControlSignal();
+    control_signal.AddJointPositionValues(positions.cbegin(), positions.cend());
+    if (optional_interface_flags_.has_velocity_command_interface)
+    {
+      control_signal.AddVelocityValues(zeros.cbegin(), zeros.cend());
+    }
+    if (optional_interface_flags_.has_torque_command_interface)
+    {
+      control_signal.AddTorqueValues(zeros.cbegin(), zeros.cend());
+    }
+    control_signal.AddGPIOValues(
+      interface_data_.gpio_commands.cbegin(), interface_data_.gpio_commands.cend());
+    if (const auto status = robot_ptr_->SendControlSignal(); status.return_code != ReturnCode::OK)
+    {
+      RCLCPP_ERROR(
+        logger_, "Activation failed: answering a queued RSI packet, IPOC %lu, failed: %s",
+        robot_ptr_->getIpoc(), status.message);
+      robot_ptr_->ResetControlSignal();
+      return false;
+    }
+  }
+  robot_ptr_->ResetControlSignal();
+
+  if (discarded == MAX_DISCARDED_PACKETS)
+  {
+    RCLCPP_ERROR(
+      logger_,
+      "Activation failed: RSI packets still arriving after dropping %lu, IPOC %lu to %lu; an "
+      "earlier RSI program may still be running",
+      discarded, first_ipoc, robot_ptr_->getIpoc());
+    return false;
+  }
+  if (discarded > 0)
+  {
+    RCLCPP_WARN(
+      logger_, "Discarded %lu RSI packet(s) queued before the start request, IPOC %lu to %lu",
+      discarded, first_ipoc, robot_ptr_->getIpoc());
+  }
+  return true;
 }
 
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_lifecycle::State &)
@@ -1276,7 +1381,112 @@ bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameters()
            "first_packet_timeout_ms", DEFAULT_FIRST_PACKET_TIMEOUT, first_packet_timeout_) &&
          ReadTimeoutParameter(
            "stop_pending_timeout_ms", DEFAULT_STOP_PENDING_TIMEOUT, stop_pending_timeout_) &&
-         ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_);
+         ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_) &&
+         ReadTimeoutParameter(
+           "first_status_timeout_ms", DEFAULT_FIRST_STATUS_TIMEOUT, first_status_timeout_);
+}
+
+bool KukaRSIHardwareInterfaceBase::ReadFaultInjectionParameter()
+{
+  const auto it = info_.hardware_parameters.find("fault_injection");
+  if (it == info_.hardware_parameters.end() || it->second == "false" || it->second == "False")
+  {
+    return true;
+  }
+  if (it->second != "true" && it->second != "True")
+  {
+    RCLCPP_ERROR(logger_, "fault_injection must be true or false, got '%s'", it->second.c_str());
+    return false;
+  }
+  for (const auto & command : info_.gpios[0].command_interfaces)
+  {
+    if (
+      command.name == hardware_interface::STOP_REQUEST ||
+      command.name == hardware_interface::RSI_MUTE_MS)
+    {
+      RCLCPP_ERROR(
+        logger_, "fault_injection exports gpio/%s, which the gpio component already has",
+        command.name.c_str());
+      return false;
+    }
+  }
+  fault_injection_.enabled = true;
+  RCLCPP_WARN(
+    logger_, "Fault injection enabled: exporting gpio/%s and gpio/%s",
+    hardware_interface::STOP_REQUEST, hardware_interface::RSI_MUTE_MS);
+  return true;
+}
+
+void KukaRSIHardwareInterfaceBase::ResetFaultInjection()
+{
+  fault_injection_.stop_request = 0.0;
+  fault_injection_.rsi_mute_ms = 0.0;
+  fault_injection_.last_stop_request = 0.0;
+  fault_injection_.last_rsi_mute_ms = 0.0;
+  fault_injection_.muted = false;
+  // A controller holds no command after activation, so the handles would keep the old values.
+  if (fault_injection_.enabled)
+  {
+    std::ignore = fault_injection_.stop_request_interface->set_value(0.0, true);
+    std::ignore = fault_injection_.rsi_mute_ms_interface->set_value(0.0, true);
+  }
+}
+
+void KukaRSIHardwareInterfaceBase::ApplyFaultInjection()
+{
+  auto & fault = fault_injection_;
+  std::ignore = fault.stop_request_interface->get_value(fault.stop_request, false);
+  std::ignore = fault.rsi_mute_ms_interface->get_value(fault.rsi_mute_ms, false);
+
+  if (
+    fault.stop_request >= 0.5 && fault.last_stop_request < 0.5 &&
+    LatchStopReason(kuka_drivers_core::StopReason::REQUESTED))
+  {
+    // A stop of the driver's own, like an RSI fault: inhibitor/rsi, no operator action.
+    event_state_.rsi_fault.store(true, std::memory_order_relaxed);
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    RCLCPP_ERROR(
+      logger_, "Stopping: stop requested through gpio/%s", hardware_interface::STOP_REQUEST);
+  }
+  fault.last_stop_request = fault.stop_request;
+
+  // The window opens after this cycle's reply, so no packet is left waiting for one.
+  if (fault.rsi_mute_ms >= 1.0 && fault.rsi_mute_ms != fault.last_rsi_mute_ms && !fault.muted)
+  {
+    fault.muted = true;
+    fault.mute_ms = fault.rsi_mute_ms;
+    fault.mute_until = std::chrono::steady_clock::now() +
+                       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                         std::chrono::duration<double, std::milli>(fault.mute_ms));
+    RCLCPP_WARN(
+      logger_, "Withholding RSI replies for %.0f ms after IPOC %lu", fault.mute_ms,
+      diagnostics_state_.last_ipoc);
+  }
+  fault.last_rsi_mute_ms = fault.rsi_mute_ms;
+}
+
+bool KukaRSIHardwareInterfaceBase::RsiMuted()
+{
+  if (!fault_injection_.muted)
+  {
+    return false;
+  }
+  runtime_state_.msg_received = false;
+  if (std::chrono::steady_clock::now() < fault_injection_.mute_until)
+  {
+    std::this_thread::sleep_for(IDLE_SLEEP_DURATION);
+    return true;
+  }
+  fault_injection_.muted = false;
+  event_state_.rsi_fault.store(true, std::memory_order_relaxed);
+  if (LatchStopReason(kuka_drivers_core::StopReason::RSI_RECEIVE_FAILED))
+  {
+    set_server_event(kuka_drivers_core::HardwareEvent::ERROR);
+    RCLCPP_ERROR(
+      logger_, "Stopping: RSI replies withheld for %.0f ms through gpio/%s",
+      fault_injection_.mute_ms, hardware_interface::RSI_MUTE_MS);
+  }
+  return true;
 }
 
 bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameter(

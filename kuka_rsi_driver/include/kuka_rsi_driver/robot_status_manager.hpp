@@ -119,6 +119,24 @@ public:
   {
     std::lock_guard<std::mutex> lck{status_mtx_};
     actual_status_interfaces_ = update;
+    status_pending_ = false;
+  }
+
+  // Drops the status of an earlier link; StatusPending() holds until the new link reports one.
+  void Invalidate()
+  {
+    kuka::external::control::kss::StatusUpdate reset;
+    reset.Reset();
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    actual_status_interfaces_ = reset;
+    status_interfaces_ = reset;
+    status_pending_ = true;
+  }
+
+  bool StatusPending()
+  {
+    std::lock_guard<std::mutex> lck{status_mtx_};
+    return status_pending_;
   }
 
   void UpdateStateInterfaces()
@@ -176,9 +194,12 @@ public:
   // Called on the mxA thread for every received telegram, changed flags or not.
   void StampTelegram()
   {
+    telegrams_.fetch_add(1, std::memory_order_relaxed);
     last_telegram_ns_.store(
       std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_relaxed);
   }
+
+  uint64_t TelegramCount() const { return telegrams_.load(std::memory_order_relaxed); }
 
   std::chrono::nanoseconds TelegramAge() const
   {
@@ -190,7 +211,9 @@ private:
   StatusInterfaces status_interfaces_;         // Used as ROS 2 state interface
   StatusInterfaces actual_status_interfaces_;  // Stores actual state
   std::mutex status_mtx_;
+  bool status_pending_ = false;
   std::atomic<std::chrono::steady_clock::rep> last_telegram_ns_{0};
+  std::atomic<uint64_t> telegrams_{0};
 };
 
 }  // namespace kuka_rsi_driver

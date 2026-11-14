@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <chrono>
 #include <regex>
 #include <thread>
@@ -89,6 +90,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   mxa_config.mxa_client_port = std::stoi(info_.hardware_parameters.at("mxa_client_port"));
 
   mxa_loss_exported_ = false;
+  control_state_.status_manager.Invalidate();
   {
     std::lock_guard<std::mutex> lk{init_mtx_};
     init_report_ = {};
@@ -278,7 +280,7 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
     return;
   }
 
-  // A guard stop raised by our own stop request is the stop's own doing.
+  // Ours if a stop is pending; else a guard input or the KRC's own stop after an RSI fault.
   const bool latch_guard =
     guard_stop_raised && !runtime_state_.stop_pending.load(std::memory_order_relaxed);
   if (!emergency_stop_raised && !latch_guard)
@@ -301,6 +303,66 @@ void KukaMxaRsiHardwareInterface::OnStatusUpdate(
     static_cast<int>(emergency_stop_raised), static_cast<int>(latch_guard),
     static_cast<int>(update.emergency_stop_), static_cast<int>(update.guard_stop_));
 }
+
+bool KukaMxaRsiHardwareInterface::RequestDrivesOn(std::chrono::steady_clock::time_point deadline)
+{
+  auto & status = control_state_.status_manager;
+  int edges = 0;
+  std::chrono::steady_clock::time_point on_since{};
+  std::chrono::steady_clock::time_point pulse_end{};
+  while (std::chrono::steady_clock::now() < deadline)
+  {
+    status.UpdateStateInterfaces();
+    const auto now = std::chrono::steady_clock::now();
+    if (!DrivesOn())
+    {
+      on_since = {};
+    }
+    else if (on_since == std::chrono::steady_clock::time_point{})
+    {
+      on_since = now;
+    }
+    else if (now - on_since >= DRIVES_ON_SETTLE)
+    {
+      return true;
+    }
+
+    // A new edge only while PERI_RDY reads 0: the SDK sends the low phase's drives-off only with
+    // PERI_RDY at 1, and it would end a power-up still settling or re-arm the Normal Stop.
+    if (now >= pulse_end && !status.DrivesPowered())
+    {
+      robot_ptr_->TurnOffDrives();
+      // Paced by mxA telegrams; a quiet link runs into the deadline and fails the attempt.
+      const uint64_t low_from = status.TelegramCount();
+      while (status.TelegramCount() < low_from + 2 && std::chrono::steady_clock::now() < deadline)
+      {
+        std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
+      }
+      if (status.TelegramCount() < low_from + 2)
+      {
+        break;
+      }
+      robot_ptr_->TurnOnDrives();
+      ++edges;
+      pulse_end = std::chrono::steady_clock::now() + DRIVES_ON_PULSE;
+    }
+    std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
+  }
+  RCLCPP_ERROR(
+    logger_, "Activation failed: drives not powered within %ld ms of %d DRIVES_ON edge(s) (%s)",
+    static_cast<int64_t>(drives_on_timeout_.count()), edges, status.Describe().c_str());
+  return false;
+}
+
+// PERI_RDY can rise briefly while the KRC still holds its Normal Stop, so operator safety counts
+// too.
+bool KukaMxaRsiHardwareInterface::DrivesOn()
+{
+  auto & status = control_state_.status_manager;
+  return status.DrivesPowered() && !status.IsGuardStopActive();
+}
+
+void KukaMxaRsiHardwareInterface::AbandonDrivesOn() { robot_ptr_->TurnOffDrives(); }
 
 void KukaMxaRsiHardwareInterface::mxa_init(const InitializationData & init_data)
 {

@@ -148,6 +148,22 @@ protected:
   // Exported: the test plugin's vtable needs it since the mxA class no longer overrides it.
   virtual KUKA_RSI_DRIVER_PUBLIC void Read(const int64_t request_timeout);
 
+  // Requests the drives on; false, with the cause logged, when it cannot by deadline.
+  virtual KUKA_RSI_DRIVER_PUBLIC bool RequestDrivesOn(std::chrono::steady_clock::time_point)
+  {
+    robot_ptr_->TurnOnDrives();
+    return true;
+  }
+
+  // Called when the drives did not come on in time.
+  virtual KUKA_RSI_DRIVER_PUBLIC void AbandonDrivesOn() {}
+
+  // Whether the drives count as on in the last copied status.
+  virtual KUKA_RSI_DRIVER_PUBLIC bool DrivesOn()
+  {
+    return control_state_.status_manager.DrivesPowered();
+  }
+
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
 
@@ -181,6 +197,22 @@ protected:
 
   // Polled from read() while a stop is pending.
   KUKA_RSI_DRIVER_LOCAL void CheckStopComplete();
+
+  // Drops the RSI packets queued before the start request; false when one could not be answered
+  // or they keep arriving.
+  KUKA_RSI_DRIVER_LOCAL bool DiscardQueuedPackets();
+
+  // Reads the fault_injection hardware parameter; false when it is not a boolean.
+  KUKA_RSI_DRIVER_LOCAL bool ReadFaultInjectionParameter();
+
+  // Clears the fault injection commands; called at activation.
+  KUKA_RSI_DRIVER_LOCAL void ResetFaultInjection();
+
+  // Acts on a new gpio/stop_request or gpio/rsi_mute_ms command; called from write().
+  KUKA_RSI_DRIVER_LOCAL void ApplyFaultInjection();
+
+  // True while replies are withheld; latches the stop once the window has passed.
+  KUKA_RSI_DRIVER_LOCAL bool RsiMuted();
 
   KUKA_RSI_DRIVER_LOCAL bool CheckJointInterfaces(
     const hardware_interface::ComponentInfo & joint) const;
@@ -291,6 +323,21 @@ protected:
     StatusManager status_manager;
   };
 
+  // Test-only gpio commands, exported only when the fault_injection parameter is true.
+  struct FaultInjectionState
+  {
+    bool enabled = false;
+    double stop_request = 0.0;
+    double rsi_mute_ms = 0.0;
+    double last_stop_request = 0.0;
+    double last_rsi_mute_ms = 0.0;
+    hardware_interface::CommandInterface::SharedPtr stop_request_interface;
+    hardware_interface::CommandInterface::SharedPtr rsi_mute_ms_interface;
+    bool muted = false;
+    double mute_ms = 0.0;
+    std::chrono::steady_clock::time_point mute_until{};
+  };
+
   // Methods common for EKI and MXA version
   CallbackReturn extended_activation(const rclcpp_lifecycle::State &);
   CallbackReturn extended_deactivation(const rclcpp_lifecycle::State &);
@@ -310,6 +357,7 @@ protected:
   RuntimeState runtime_state_;
   DiagnosticsState diagnostics_state_;
   ControlState control_state_;
+  FaultInjectionState fault_injection_;
 
   static constexpr std::chrono::milliseconds IDLE_SLEEP_DURATION{2};
   static constexpr std::chrono::milliseconds INIT_WAIT_DURATION{100};
@@ -319,17 +367,25 @@ protected:
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_TIMEOUT{1'000};
   static constexpr std::chrono::milliseconds CLEANUP_CANCEL_CHECK_INTERVAL{10};
 
+  static constexpr std::chrono::milliseconds FIRST_STATUS_CHECK_INTERVAL{10};
+
+  // Bounds on dropping the packets queued before an RSI start.
+  static constexpr std::chrono::milliseconds DISCARD_RECEIVE_TIMEOUT{1};
+  static constexpr uint64_t MAX_DISCARDED_PACKETS{1'000};
+
   // Timeouts from the *_timeout_ms hardware parameters.
   static constexpr std::chrono::milliseconds DEFAULT_CONFIGURE_TIMEOUT{1'500};
-  static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{3'000};
+  static constexpr std::chrono::milliseconds DEFAULT_DRIVES_ON_TIMEOUT{5'000};
   static constexpr std::chrono::milliseconds DEFAULT_FIRST_PACKET_TIMEOUT{5'000};
   static constexpr std::chrono::milliseconds DEFAULT_STOP_PENDING_TIMEOUT{3'000};
   static constexpr std::chrono::milliseconds DEFAULT_READ_TIMEOUT{12};
+  static constexpr std::chrono::milliseconds DEFAULT_FIRST_STATUS_TIMEOUT{1'000};
   std::chrono::milliseconds configure_timeout_{DEFAULT_CONFIGURE_TIMEOUT};
   std::chrono::milliseconds drives_on_timeout_{DEFAULT_DRIVES_ON_TIMEOUT};
   std::chrono::milliseconds first_packet_timeout_{DEFAULT_FIRST_PACKET_TIMEOUT};
   std::chrono::milliseconds stop_pending_timeout_{DEFAULT_STOP_PENDING_TIMEOUT};
   std::chrono::milliseconds read_timeout_{DEFAULT_READ_TIMEOUT};
+  std::chrono::milliseconds first_status_timeout_{DEFAULT_FIRST_STATUS_TIMEOUT};
 
   // Fixed cycle time and control mode for this driver version.
   static constexpr RsiCycleTime RSI_CYCLE_TIME = RsiCycleTime::RSI_4MS;
