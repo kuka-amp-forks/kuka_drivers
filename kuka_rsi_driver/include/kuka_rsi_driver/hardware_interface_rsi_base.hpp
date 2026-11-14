@@ -158,6 +158,12 @@ protected:
   // Called when the drives did not come on in time.
   virtual KUKA_RSI_DRIVER_PUBLIC void AbandonDrivesOn() {}
 
+  // Whether the drives count as on in the last copied status.
+  virtual KUKA_RSI_DRIVER_PUBLIC bool DrivesOn()
+  {
+    return control_state_.status_manager.DrivesPowered();
+  }
+
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
 

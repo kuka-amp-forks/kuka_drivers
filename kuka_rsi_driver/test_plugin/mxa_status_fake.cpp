@@ -172,6 +172,7 @@ bool MxaStatusFake::IsStatusTelegramPending() const
 MxaStatusFake::Status MxaStatusFake::TurnOnDrives()
 {
   bool edge = false;
+  bool flash = false;
   {
     std::lock_guard<std::mutex> lk{mtx_};
     edge = !drives_on_input_;
@@ -183,6 +184,18 @@ MxaStatusFake::Status MxaStatusFake::TurnOnDrives()
       RCLCPP_INFO(
         logger_, "mxA status fake: drives-on requested, normal stop released in %d ms",
         normal_stop_release_ms_);
+      // With transient_peri set, a request soon after the drives-off flashes PERI_RDY while the
+      // Normal Stop still holds, as the KRC did on fast power cycles.
+      if (
+        transient_peri_ && std::chrono::steady_clock::now() - drives_off_time_ <
+                             std::chrono::milliseconds(kTransientPeriWindowMs))
+      {
+        status_.drives_powered_ = true;
+        transient_peri_until_ =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(kTransientPeriMs);
+        flash = true;
+        RCLCPP_INFO(logger_, "mxA status fake: PERI_RDY flash with guard_stop=1");
+      }
     }
     if (edge && (status_.guard_stop_ || status_.emergency_stop_))
     {
@@ -200,6 +213,10 @@ MxaStatusFake::Status MxaStatusFake::TurnOnDrives()
   {
     SetDrivesPowered(true);
   }
+  else if (flash)
+  {
+    Dispatch();
+  }
   return {ReturnCode::OK};
 }
 
@@ -215,6 +232,7 @@ MxaStatusFake::Status MxaStatusFake::TurnOffDrives()
       status_.guard_stop_ = true;
       normal_stop_held_ = true;
       normal_stop_until_ = {};
+      drives_off_time_ = std::chrono::steady_clock::now();
       RCLCPP_INFO(logger_, "mxA status fake: normal stop held");
     }
   }
@@ -287,8 +305,17 @@ void MxaStatusFake::Serve()
     }
 
     bool normal_stop_over = false;
+    bool flash_over = false;
     {
       std::lock_guard<std::mutex> lk{mtx_};
+      if (
+        transient_peri_until_ != std::chrono::steady_clock::time_point{} &&
+        std::chrono::steady_clock::now() >= transient_peri_until_)
+      {
+        transient_peri_until_ = {};
+        status_.drives_powered_ = false;
+        flash_over = true;
+      }
       if (
         normal_stop_until_ != std::chrono::steady_clock::time_point{} &&
         std::chrono::steady_clock::now() >= normal_stop_until_)
@@ -298,6 +325,11 @@ void MxaStatusFake::Serve()
         status_.guard_stop_ = false;
         normal_stop_over = true;
       }
+    }
+    if (flash_over)
+    {
+      RCLCPP_INFO(logger_, "mxA status fake: PERI_RDY flash over, drives_powered=0");
+      Dispatch();
     }
     if (normal_stop_over)
     {
@@ -418,6 +450,10 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   else if (key == "normal_stop")
   {
     normal_stop_ = flag;
+  }
+  else if (key == "transient_peri")
+  {
+    transient_peri_ = flag;
   }
   else if (key == "normal_stop_release_ms")
   {

@@ -81,12 +81,15 @@ protected:
     const kuka::external::control::kss::Configuration &) override;
 
   // The KRC switches the drives on only on a DRIVES_ON rising edge, and leaves its Normal Stop only
-  // after a request: pulses DRIVES_ON, low for a telegram then high, until the drives are on.
+  // after a request: pulses DRIVES_ON, low for a telegram then high, until DrivesOn() settles.
   KUKA_RSI_DRIVER_PUBLIC bool RequestDrivesOn(
     std::chrono::steady_clock::time_point deadline) override;
 
   // Leaves DRIVES_ON low, so the next attempt has an edge.
   KUKA_RSI_DRIVER_PUBLIC void AbandonDrivesOn() override;
+
+  // Drives powered with operator safety back (USER_SAFE).
+  KUKA_RSI_DRIVER_PUBLIC bool DrivesOn() override;
 
 private:
   // Latches the first mxA status that forbids motion; true when this call latched it.
@@ -101,8 +104,11 @@ private:
   static constexpr std::chrono::milliseconds SDK_MXA_RECEIVE_TIMEOUT{100};
   std::chrono::milliseconds mxa_status_timeout_{DEFAULT_MXA_STATUS_TIMEOUT};
   static constexpr std::chrono::milliseconds DRIVES_ON_STEP_INTERVAL{5};
-  // How long DRIVES_ON stays high per edge, as the KRC_ERROR drives-on pulse.
+  // How long DRIVES_ON stays high per edge before the next low phase.
   static constexpr std::chrono::milliseconds DRIVES_ON_PULSE{250};
+  // How long DrivesOn() must hold before the drives count as on; outlasts a single-telegram
+  // flicker.
+  static constexpr std::chrono::milliseconds DRIVES_ON_SETTLE{100};
   // Set once read() has exported an mxA loss as server_state; the next write() or read() errors.
   bool mxa_loss_exported_ = false;
   // E-stop and guard stop of the last telegram, mxA thread only. Telegrams come only on a change,

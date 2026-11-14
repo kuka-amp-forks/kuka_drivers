@@ -308,36 +308,58 @@ bool KukaMxaRsiHardwareInterface::RequestDrivesOn(std::chrono::steady_clock::tim
 {
   auto & status = control_state_.status_manager;
   int edges = 0;
+  std::chrono::steady_clock::time_point on_since{};
+  std::chrono::steady_clock::time_point pulse_end{};
   while (std::chrono::steady_clock::now() < deadline)
   {
-    // Drops only DRIVES_ON: the SDK keeps DRIVES_OFF released while PERI_RDY is 0.
-    robot_ptr_->TurnOffDrives();
-    const uint64_t low_from = status.TelegramCount();
-    while (status.TelegramCount() < low_from + 2 && std::chrono::steady_clock::now() < deadline)
+    status.UpdateStateInterfaces();
+    const auto now = std::chrono::steady_clock::now();
+    if (!DrivesOn())
     {
-      std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
+      on_since = {};
     }
-    if (status.TelegramCount() < low_from + 2)
+    else if (on_since == std::chrono::steady_clock::time_point{})
     {
-      break;
+      on_since = now;
     }
-    robot_ptr_->TurnOnDrives();
-    ++edges;
-    const auto high_until = std::min(std::chrono::steady_clock::now() + DRIVES_ON_PULSE, deadline);
-    while (std::chrono::steady_clock::now() < high_until)
+    else if (now - on_since >= DRIVES_ON_SETTLE)
     {
-      std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
-      status.UpdateStateInterfaces();
-      if (status.DrivesPowered())
+      return true;
+    }
+
+    // A new edge only while PERI_RDY reads 0: the SDK sends the low phase's drives-off only with
+    // PERI_RDY at 1, and it would end a power-up still settling or re-arm the Normal Stop.
+    if (now >= pulse_end && !status.DrivesPowered())
+    {
+      robot_ptr_->TurnOffDrives();
+      // Paced by mxA telegrams; a quiet link runs into the deadline and fails the attempt.
+      const uint64_t low_from = status.TelegramCount();
+      while (status.TelegramCount() < low_from + 2 && std::chrono::steady_clock::now() < deadline)
       {
-        return true;
+        std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
       }
+      if (status.TelegramCount() < low_from + 2)
+      {
+        break;
+      }
+      robot_ptr_->TurnOnDrives();
+      ++edges;
+      pulse_end = std::chrono::steady_clock::now() + DRIVES_ON_PULSE;
     }
+    std::this_thread::sleep_for(DRIVES_ON_STEP_INTERVAL);
   }
   RCLCPP_ERROR(
-    logger_, "Activation failed: drives not powered within %ld ms of %d DRIVES_ON edge(s)",
-    static_cast<int64_t>(drives_on_timeout_.count()), edges);
+    logger_, "Activation failed: drives not powered within %ld ms of %d DRIVES_ON edge(s) (%s)",
+    static_cast<int64_t>(drives_on_timeout_.count()), edges, status.Describe().c_str());
   return false;
+}
+
+// PERI_RDY can rise briefly while the KRC still holds its Normal Stop, so operator safety counts
+// too.
+bool KukaMxaRsiHardwareInterface::DrivesOn()
+{
+  auto & status = control_state_.status_manager;
+  return status.DrivesPowered() && !status.IsGuardStopActive();
 }
 
 void KukaMxaRsiHardwareInterface::AbandonDrivesOn() { robot_ptr_->TurnOffDrives(); }

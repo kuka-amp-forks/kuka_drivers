@@ -43,6 +43,7 @@ SLOW_RELEASE_MS = 7000
 
 DRIVES_POWERED_LINE = re.compile(r"Drives successfully powered on after (\d+) ms")
 DRIVES_FAILED_LINE = re.compile(r"Activation failed: drives not powered within \d+ ms of (\d+)")
+PERI_FLASH_LINE = "mxA status fake: PERI_RDY flash with guard_stop=1"
 STOP_COMPLETE_LINE = "Stop complete"
 STARTING_LINE = "Starting joint position control at 4 ms"
 
@@ -122,6 +123,34 @@ class TestDrivesOnAfterNormalStop(RsiFaultTestCase):
 
         log = LogCursor(proc_output)
         self.inject("normal_stop=0")
+        self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
+        self.assertTrue(log.wait_for(STOP_COMPLETE_LINE, timeout=5), "stop never completed")
+        self.wait_for_simulator_respawn(log)
+
+    def test_drives_on_waits_through_peri_flash(self, proc_output):
+        self.ensure_component_state(State.PRIMARY_STATE_INACTIVE)
+        self.publish_is_configured()
+        self.inject(f"normal_stop=0 operation_mode={OP_MODE_EXT} motion_possible=1")
+        log = LogCursor(proc_output)
+        future = self.request_active()
+        self.activate_with_simulator(log, future, respawned=True)
+
+        # The first request flashes drives_powered while guard_stop still reads 1; starting RSI on
+        # that flash would leave the KRC waiting for drives that never come.
+        self.inject("transient_peri=1")
+        log = self.deactivate_into_normal_stop(proc_output, RELEASE_MS)
+        future = self.request_active()
+        self.activate_with_simulator(log, future)
+        self.assertTrue(log.wait_for(PERI_FLASH_LINE, timeout=1), "no PERI_RDY flash")
+        powered = log.wait_for_match(DRIVES_POWERED_LINE, timeout=1)
+        self.assertIsNotNone(powered, "drives not powered")
+        self.assertGreaterEqual(int(powered.group(1)), RELEASE_MS, "started on the flash")
+        self._spin_for(1.0)
+        self.assertEqual(self.component_state(), State.PRIMARY_STATE_ACTIVE)
+        self.assert_latched(set())
+
+        log = LogCursor(proc_output)
+        self.inject("normal_stop=0 transient_peri=0")
         self.assertTrue(self.set_component_state(State.PRIMARY_STATE_INACTIVE), "deactivate")
         self.assertTrue(log.wait_for(STOP_COMPLETE_LINE, timeout=5), "stop never completed")
         self.wait_for_simulator_respawn(log)

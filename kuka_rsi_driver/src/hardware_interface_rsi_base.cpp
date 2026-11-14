@@ -955,7 +955,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
     return CallbackReturn::FAILURE;
   }
 
-  if (!control_state_.status_manager.DrivesPowered())
+  if (!DrivesOn())
   {
     RCLCPP_INFO(
       logger_, "Turning on drives, waiting up to %ld ms",
@@ -966,7 +966,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_activation(const rclcpp_li
       AbandonDrivesOn();
       return CallbackReturn::FAILURE;
     }
-    while (!control_state_.status_manager.DrivesPowered())
+    while (!DrivesOn())
     {
       if (std::chrono::steady_clock::now() - start_time > drives_on_timeout_)
       {
