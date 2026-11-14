@@ -381,10 +381,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::St
 
 return_type KukaRSIHardwareInterfaceBase::read(const rclcpp::Time &, const rclcpp::Duration &)
 {
-  {
-    std::lock_guard<std::mutex> lk(event_state_.event_mutex);
-    event_state_.server_state = static_cast<double>(event_state_.last_event);
-  }
+  event_state_.server_state = static_cast<double>(event_state_.last_event.load());
   UpdateDriveFaultState();
   UpdateInhibitors();
 
@@ -776,8 +773,7 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
 
 void KukaRSIHardwareInterfaceBase::set_server_event(kuka_drivers_core::HardwareEvent event)
 {
-  std::lock_guard<std::mutex> lk(event_state_.event_mutex);
-  event_state_.last_event = event;
+  event_state_.last_event.store(event);
 }
 
 bool KukaRSIHardwareInterfaceBase::CheckJointInterfaces(

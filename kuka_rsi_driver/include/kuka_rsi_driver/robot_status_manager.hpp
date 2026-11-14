@@ -115,11 +115,10 @@ public:
     return status_interfaces_.StateInterfaceValues();
   }
 
+  // Called on the mxA (or EKI) thread; read() takes the update without a lock.
   void SetStatusInterfaces(const kuka::external::control::kss::StatusUpdate & update)
   {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    actual_status_interfaces_ = update;
-    status_pending_ = false;
+    actual_status_.store(Pack(update), std::memory_order_release);
   }
 
   // Drops the status of an earlier link; StatusPending() holds until the new link reports one.
@@ -127,68 +126,36 @@ public:
   {
     kuka::external::control::kss::StatusUpdate reset;
     reset.Reset();
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    actual_status_interfaces_ = reset;
+    actual_status_.store(Pack(reset) | PENDING_BIT, std::memory_order_release);
     status_interfaces_ = reset;
-    status_pending_ = true;
   }
 
-  bool StatusPending()
+  bool StatusPending() const
   {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_pending_;
+    return (actual_status_.load(std::memory_order_acquire) & PENDING_BIT) != 0;
   }
 
+  // The flag accessors below read this copy, which only the thread calling read() and the
+  // lifecycle transitions touch; the hardware component serializes those.
   void UpdateStateInterfaces()
   {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    status_interfaces_ = actual_status_interfaces_;
+    status_interfaces_ = Unpack(actual_status_.load(std::memory_order_acquire));
   }
 
-  bool IsKrcInExtMode()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_.IsOperationModeExt();
-  }
+  bool IsKrcInExtMode() const { return status_interfaces_.IsOperationModeExt(); }
 
-  bool DrivesPowered()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_.DrivesPowered();
-  }
+  bool DrivesPowered() const { return status_interfaces_.DrivesPowered(); }
 
-  bool IsEmergencyStopActive()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_.IsEmergencyStopActive();
-  }
+  bool IsEmergencyStopActive() const { return status_interfaces_.IsEmergencyStopActive(); }
 
-  bool IsMotionPossible()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_.IsMotionPossible();
-  }
+  bool IsMotionPossible() const { return status_interfaces_.IsMotionPossible(); }
 
-  bool IsGuardStopActive()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_.IsGuardStopActive();
-  }
+  bool IsGuardStopActive() const { return status_interfaces_.IsGuardStopActive(); }
 
-  std::string Describe()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_.Describe();
-  }
+  std::string Describe() const { return status_interfaces_.Describe(); }
 
-  // One consistent copy of all flags, for callers that would otherwise take the lock per flag.
-  StatusInterfaces Snapshot()
-  {
-    std::lock_guard<std::mutex> lck{status_mtx_};
-    return status_interfaces_;
-  }
+  StatusInterfaces Snapshot() const { return status_interfaces_; }
 
-  // The copy UpdateStateInterfaces() took, without the lock: only the thread that took it.
   const StatusInterfaces & Current() const { return status_interfaces_; }
 
   // Called on the mxA thread for every received telegram, changed flags or not.
@@ -208,10 +175,48 @@ public:
   }
 
 private:
-  StatusInterfaces status_interfaces_;         // Used as ROS 2 state interface
-  StatusInterfaces actual_status_interfaces_;  // Stores actual state
-  std::mutex status_mtx_;
-  bool status_pending_ = false;
+  using StatusUpdate = kuka::external::control::kss::StatusUpdate;
+
+  static constexpr uint64_t PENDING_BIT = uint64_t{1} << 63;
+
+  static uint64_t Pack(const StatusUpdate & update)
+  {
+    uint64_t bits = static_cast<uint64_t>(update.control_mode_) |
+                    static_cast<uint64_t>(update.cycle_time_) << 8 |
+                    static_cast<uint64_t>(update.operation_mode_) << 16;
+    const bool flags[] = {update.drives_powered_,       update.emergency_stop_,
+                          update.guard_stop_,           update.in_motion_,
+                          update.motion_possible_,      update.robot_stopped_,
+                          update.brake_test_requested_, update.brake_test_warning_,
+                          update.stop_message_active_,  update.move_enable_sent_};
+    for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+    {
+      bits |= static_cast<uint64_t>(flags[i]) << (24 + i);
+    }
+    return bits;
+  }
+
+  static StatusUpdate Unpack(uint64_t bits)
+  {
+    StatusUpdate update;
+    update.control_mode_ = static_cast<kuka::external::control::ControlMode>(bits & 0xFF);
+    update.cycle_time_ = static_cast<kuka::external::control::kss::CycleTime>((bits >> 8) & 0xFF);
+    update.operation_mode_ =
+      static_cast<kuka::external::control::OperationMode>((bits >> 16) & 0xFF);
+    bool * flags[] = {&update.drives_powered_,       &update.emergency_stop_,
+                      &update.guard_stop_,           &update.in_motion_,
+                      &update.motion_possible_,      &update.robot_stopped_,
+                      &update.brake_test_requested_, &update.brake_test_warning_,
+                      &update.stop_message_active_,  &update.move_enable_sent_};
+    for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
+    {
+      *flags[i] = ((bits >> (24 + i)) & 1) != 0;
+    }
+    return update;
+  }
+
+  StatusInterfaces status_interfaces_;  // Used as ROS 2 state interface
+  std::atomic<uint64_t> actual_status_{0};
   std::atomic<std::chrono::steady_clock::rep> last_telegram_ns_{0};
   std::atomic<uint64_t> telegrams_{0};
 };
