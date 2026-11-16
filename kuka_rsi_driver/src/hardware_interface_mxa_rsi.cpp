@@ -313,6 +313,12 @@ bool KukaMxaRsiHardwareInterface::RequestDrivesOn(std::chrono::steady_clock::tim
   while (std::chrono::steady_clock::now() < deadline)
   {
     status.UpdateStateInterfaces();
+    if (status.IsEmergencyStopActive())
+    {
+      RCLCPP_ERROR(
+        logger_, "Activation failed: Emergency stop is active after %d DRIVES_ON edge(s)", edges);
+      return false;
+    }
     const auto now = std::chrono::steady_clock::now();
     if (!DrivesOn())
     {
