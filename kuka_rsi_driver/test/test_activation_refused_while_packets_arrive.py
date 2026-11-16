@@ -38,27 +38,49 @@ STILL_ARRIVING_LINE = re.compile(
     r"Activation failed: RSI packets still arriving after dropping (\d+), IPOC (\d+) to (\d+)"
 )
 STARTING_LINE = "Starting joint position control at 4 ms"
+RSI_PORT = 59152
+STREAM_START_TIMEOUT_S = 30
 
 # Sends RSI state packets to the driver's port without pause, as an RSI program that was never
 # cancelled keeps doing; its own process, so the test's executor never opens a gap in the stream.
 STREAM_SCRIPT = """
 import socket
+import sys
 import numpy as np
 from kuka_rsi_simulator.rsi_simulator import _default_rsi_xml_config, create_rsi_xml_rob
 config = _default_rsi_xml_config()
 pos = np.zeros(12)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+port = int(sys.argv[1])
 ipoc = 1
 while True:
-    sock.sendto(create_rsi_xml_rob(pos, pos, pos, 0, ipoc, config), ("127.0.0.1", 59152))
+    sock.sendto(create_rsi_xml_rob(pos, pos, pos, 0, ipoc, config), ("127.0.0.1", port))
     ipoc += 1
 """
 
 
+def _driver_socket_drops():
+    """Return the kernel's drop count on the driver's RSI socket, or None if it is not bound."""
+    with open("/proc/net/udp") as table:
+        for line in table.readlines()[1:]:
+            fields = line.split()
+            if fields[1].endswith(f":{RSI_PORT:04X}"):
+                return int(fields[-1])
+    return None
+
+
 class _StaleStream:
     def __enter__(self):
-        self._proc = subprocess.Popen([sys.executable, "-c", STREAM_SCRIPT])
-        time.sleep(1.0)
+        baseline = _driver_socket_drops()
+        assert baseline is not None, f"no socket bound to RSI port {RSI_PORT}"
+        self._proc = subprocess.Popen([sys.executable, "-c", STREAM_SCRIPT, str(RSI_PORT)])
+        # Drops mean the driver's receive queue is full, so the drain starts on a full queue.
+        end = time.monotonic() + STREAM_START_TIMEOUT_S
+        while _driver_socket_drops() == baseline:
+            if self._proc.poll() is not None or time.monotonic() > end:
+                self.__exit__()
+                raise AssertionError(f"RSI socket not full within {STREAM_START_TIMEOUT_S} s")
+            time.sleep(0.01)
         return self
 
     def __exit__(self, *exc):
