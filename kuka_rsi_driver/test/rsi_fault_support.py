@@ -142,6 +142,7 @@ def fault_launch_description(
     inactive_controllers=(),
     gpio_config="",
     extra_params="",
+    controller_manager_params=None,
 ):
     """
     control_node on the fake: JTC inactive; JSB, inhibitor and event broadcasters active.
@@ -151,6 +152,7 @@ def fault_launch_description(
     inactive_controllers are (name, file in test/config) pairs, loaded inactive.
     gpio_config is a xacro file with the gpio_config macro; empty leaves the gpio empty.
     extra_params are <param> elements added to the <hardware> block.
+    controller_manager_params are added to control_node's parameters.
     """
     description = {
         "robot_description": robot_description(
@@ -166,6 +168,7 @@ def fault_launch_description(
             description,
             _test_config("fault_latch_controller_manager.yaml"),
             {"hardware_components_initial_state": {"inactive": [COMPONENT]}},
+            controller_manager_params or {},
         ],
     )
 

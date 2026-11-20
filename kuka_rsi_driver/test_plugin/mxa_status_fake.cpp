@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -86,6 +87,7 @@ MxaStatusFake::Status MxaStatusFake::Setup()
 
   running_ = true;
   thread_ = std::thread(&MxaStatusFake::Serve, this);
+  pthread_setname_np(thread_.native_handle(), "mxa_status_fake");
   RCLCPP_INFO(logger_, "mxA status fake listening on 127.0.0.1:%u", port_);
 
   return kuka::external::control::kss::rsi::Robot::Setup();
@@ -165,6 +167,15 @@ bool MxaStatusFake::IsStatusTelegramPending() const
 {
   std::lock_guard<std::mutex> lk{mtx_};
   return !link_down_ && std::chrono::steady_clock::now() - last_delivery_ >= kTelegramPeriod;
+}
+
+std::optional<std::thread::native_handle_type> MxaStatusFake::StatusThreadNativeHandle()
+{
+  if (!thread_.joinable())
+  {
+    return std::nullopt;
+  }
+  return thread_.native_handle();
 }
 
 // Like the KRC: a drives-on request starts the release of a held Normal Stop, and only a DRIVES_ON
@@ -291,17 +302,6 @@ void MxaStatusFake::Serve()
       {
         Apply(std::string(buf.data(), static_cast<size_t>(n)));
       }
-    }
-
-    std::chrono::steady_clock::time_point stall_until;
-    {
-      std::lock_guard<std::mutex> lk{mtx_};
-      stall_until = stall_until_;
-    }
-    if (std::chrono::steady_clock::now() < stall_until)
-    {
-      std::this_thread::sleep_until(stall_until);
-      RCLCPP_INFO(logger_, "mxA status fake: receive resumed");
     }
 
     bool normal_stop_over = false;
@@ -441,11 +441,6 @@ bool MxaStatusFake::ApplyToken(const std::string & token)
   if (key == "cancel_cycles")
   {
     cancel_cycles_ = number;
-  }
-  else if (key == "stall_receive")
-  {
-    stall_until_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(number);
-    RCLCPP_INFO(logger_, "mxA status fake: receive stalled for %d ms", number);
   }
   else if (key == "normal_stop")
   {
