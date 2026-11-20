@@ -81,6 +81,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_velocity_estimator test/test_velocity_estimator.cpp)
   ament_add_gtest(test_rsi_xml_configuration_parser test/test_rsi_xml_configuration_parser.cpp)
   target_link_libraries(test_rsi_xml_configuration_parser ${PROJECT_NAME})
+  ament_add_gtest(test_robot_status_manager test/test_robot_status_manager.cpp)
+  target_link_libraries(test_robot_status_manager ${PROJECT_NAME})
   target_compile_definitions(test_rsi_xml_configuration_parser PRIVATE
     RSI_XML_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config/rsi_xml_config_example.yaml")
 
