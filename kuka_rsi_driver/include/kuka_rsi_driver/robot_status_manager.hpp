@@ -28,6 +28,7 @@
 #include "rclcpp/rclcpp.hpp"
 
 #include "kuka/external-control-sdk/kss/status_update.h"
+#include "kuka_drivers_core/hardware_interface_types.hpp"
 
 namespace kuka_rsi_driver
 {
@@ -176,6 +177,13 @@ public:
 
 private:
   using StatusUpdate = kuka::external::control::kss::StatusUpdate;
+
+  // Pack()/Unpack() and StatusInterfaces::operator= each hand-list StatusUpdate's fields; this
+  // catches the SDK adding or removing one before it is silently dropped from all three.
+  static_assert(
+    sizeof(StatusUpdate) == 13,
+    "StatusUpdate changed size: update the field lists in StatusInterfaces::operator=, Pack() "
+    "and Unpack(), and this assert, in robot_status_manager.hpp");
 
   static constexpr uint64_t PENDING_BIT = uint64_t{1} << 63;
 
