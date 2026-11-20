@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -42,7 +43,6 @@ namespace kuka_rsi_driver
 //   "freeze_status" / "unfreeze_status"  withhold or restart status delivery, not the telegrams
 //   "link_down" / "link_up"  stop or restart the telegram stream itself; released with the
 //                        link down, the fake raises the SDK's receive-timeout OnError
-//   "stall_receive=<ms>"  hold the receive thread for <ms> while telegrams keep arriving
 //   "error=<text>" / "stopped=<text>"  raise OnError / OnStopped on the event handler; a '+' in
 //                        the text is delivered as a space, so the SDK's own texts can be sent
 //   "cancel_cycles=<int>" ticks (10 ms) a requested RSI cancel takes; held while status is frozen
@@ -69,6 +69,7 @@ public:
   Status RequestRsiProgramCancel() override;
   bool IsRsiProgramCancelled() const override;
   bool IsStatusTelegramPending() const override;
+  std::optional<std::thread::native_handle_type> StatusThreadNativeHandle() override;
   Status TurnOnDrives() override;
   Status TurnOffDrives() override;
   Status SetCycleTime(kuka::external::control::kss::CycleTime) override;
@@ -118,7 +119,6 @@ private:
   std::chrono::steady_clock::time_point normal_stop_until_{};
   uint64_t telegrams_ = 0;
   std::chrono::steady_clock::time_point last_delivery_{};
-  std::chrono::steady_clock::time_point stall_until_{};
   int cancel_cycles_ = 12;
   int cancel_pending_ = 0;
   bool cancelled_ = false;
