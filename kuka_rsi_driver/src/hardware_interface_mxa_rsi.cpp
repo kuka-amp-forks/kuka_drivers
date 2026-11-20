@@ -281,7 +281,7 @@ return_type KukaMxaRsiHardwareInterface::write(
 bool KukaMxaRsiHardwareInterface::LatchStatusStop()
 {
   using kuka_drivers_core::StopReason;
-  auto status = control_state_.status_manager.Snapshot();
+  const auto & status = control_state_.status_manager.Current();
 
   StopReason reason = StopReason::NONE;
   if (status.IsEmergencyStopActive())

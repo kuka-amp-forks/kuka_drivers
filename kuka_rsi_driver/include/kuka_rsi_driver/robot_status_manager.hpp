@@ -155,8 +155,6 @@ public:
 
   std::string Describe() const { return status_interfaces_.Describe(); }
 
-  StatusInterfaces Snapshot() const { return status_interfaces_; }
-
   const StatusInterfaces & Current() const { return status_interfaces_; }
 
   // Called on the mxA thread for every received telegram, changed flags or not.
