@@ -20,6 +20,7 @@
 #include <cstring>
 #include <regex>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
@@ -31,6 +32,9 @@
 
 namespace kuka_rsi_driver
 {
+
+// Any client still live at destruction is a teardown path too; see ReleaseRobot().
+KukaMxaRsiHardwareInterface::~KukaMxaRsiHardwareInterface() { ReleaseRobot(); }
 
 CallbackReturn KukaMxaRsiHardwareInterface::on_init(
   const hardware_interface::HardwareComponentInterfaceParams & params)
@@ -129,7 +133,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     RCLCPP_ERROR_STREAM(
       logger_, "No initialization report from the mxA server at "
                  << mxa_config.kli_ip_address << " within " << configure_timeout_.count() << " ms");
-    robot_ptr_.reset();
+    ReleaseRobot();
     return CallbackReturn::FAILURE;
   }
 
@@ -140,7 +144,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
       RCLCPP_ERROR(
         logger_, "The driver is incompatible with the current hardware and software setup: %s",
         init_report_.reason.c_str());
-      robot_ptr_.reset();
+      ReleaseRobot();
       return CallbackReturn::ERROR;
     }
     RCLCPP_INFO(logger_, "The driver is compatible with the current hardware and software setup");
@@ -165,6 +169,8 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_deactivate(const rclcpp_lifecycle
 }
 
 // ERROR releases the client; the mxA-loss label belongs only to read()'s own timeout latch.
+// The actual release goes through the base's ReleaseRobot(), which joins the SDK's keep-alive
+// thread: the thread is cancelable and its own receive is bounded, so the join always returns.
 CallbackReturn KukaMxaRsiHardwareInterface::on_error(const rclcpp_lifecycle::State & state)
 {
   RCLCPP_ERROR(

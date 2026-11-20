@@ -357,7 +357,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_cleanup(const rclcpp_lifecycle::
   }
   runtime_state_.stop_pending = false;
   runtime_state_.cancel_confirmed = false;
-  robot_ptr_.reset();
+  ReleaseRobot();
   return CallbackReturn::SUCCESS;
 }
 
@@ -375,7 +375,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_error(const rclcpp_lifecycle::St
   runtime_state_.packet_unanswered = false;
   runtime_state_.stop_pending = false;
   runtime_state_.cancel_confirmed = false;
-  robot_ptr_.reset();
+  ReleaseRobot();
   return CallbackReturn::SUCCESS;
 }
 
