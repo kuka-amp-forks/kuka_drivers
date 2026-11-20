@@ -103,7 +103,7 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
     RCLCPP_ERROR_STREAM(
       logger_, "No initialization report from the EKI server at "
                  << eki_config.kli_ip_address << " within " << configure_timeout_.count() << " ms");
-    robot_ptr_.reset();
+    ReleaseRobot();
     return CallbackReturn::FAILURE;
   }
 
@@ -114,7 +114,7 @@ CallbackReturn KukaEkiRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
       RCLCPP_ERROR(
         logger_, "The driver is incompatible with the current hardware and software setup: %s",
         init_report_.reason.c_str());
-      robot_ptr_.reset();
+      ReleaseRobot();
       return CallbackReturn::ERROR;
     }
     RCLCPP_INFO(logger_, "The driver is compatible with the current hardware and software setup");

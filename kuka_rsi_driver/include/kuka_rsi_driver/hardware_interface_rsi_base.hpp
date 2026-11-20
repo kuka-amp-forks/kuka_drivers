@@ -165,6 +165,10 @@ protected:
     return control_state_.status_manager.DrivesPowered();
   }
 
+  // Releases robot_ptr_; every teardown path (on_cleanup, on_error, the destructor) calls this
+  // instead of resetting it directly, so a subclass override runs on all of them uniformly.
+  virtual KUKA_RSI_DRIVER_PUBLIC void ReleaseRobot() { robot_ptr_.reset(); }
+
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
 
