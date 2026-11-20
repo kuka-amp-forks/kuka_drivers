@@ -60,8 +60,10 @@ class _FakeRsiClient:
                 data, addr = self._socket.recvfrom(2048)
             except socket.timeout:
                 continue
-            ipoc = int(ET.fromstring(data).find("IPOC").text)
-            for reply in self._replies(ipoc):
+            ipoc_node = ET.fromstring(data).find("IPOC")
+            if ipoc_node is None:
+                continue
+            for reply in self._replies(int(ipoc_node.text)):
                 self._socket.sendto(reply, addr)
 
     def close(self):
@@ -189,6 +191,17 @@ class FaultInjectionTestCase(unittest.TestCase):
         # The armed IPOC is sent once normally, then repeated 3 more times.
         self.assertTrue(4 in run_lengths, f"no run of 4 identical IPOCs, ipocs={self.states}")
         self.assertTrue(all(length == 1 for length in run_lengths if length != 4))
+
+    def test_simulator_injects_malformed_packet(self):
+        self._run_cycles(3)
+        before_count = len(self.states)
+        self._set_fault("fault_malformed_packet_count", 1)
+
+        # The malformed packet goes to the peer, not to the state topic.
+        self._run_cycles(1)
+        self.assertEqual(len(self.states), before_count)
+        self._run_cycles(1)
+        self.assertEqual(len(self.states), before_count + 1)
 
     def test_simulator_discards_stale_reply_and_uses_matching_one(self):
         self._run_cycles(3)

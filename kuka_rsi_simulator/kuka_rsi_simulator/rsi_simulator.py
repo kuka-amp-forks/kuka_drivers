@@ -26,6 +26,10 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
+# Sent in place of a motion state by fault_malformed_packet_count: no position element, no IPOC.
+MALFORMED_RSI_PACKET = b'<Rob TYPE="KUKA"><Broken/></Rob>'
+
+
 def _default_rsi_xml_config():
     return {
         "motion_state_cartesian_enabled": True,
@@ -435,6 +439,7 @@ class RSISimulator(Node):
     late_packet_remaining_ = 0
     dropped_packet_remaining_ = 0
     repeated_ipoc_remaining_ = 0
+    malformed_packet_remaining_ = 0
 
     def __init__(self, node_name):
         super().__init__(node_name)
@@ -447,6 +452,7 @@ class RSISimulator(Node):
         self.declare_parameter("fault_late_packet_cycles", 0)
         self.declare_parameter("fault_dropped_packet_count", 0)
         self.declare_parameter("fault_repeated_ipoc_count", 0)
+        self.declare_parameter("fault_malformed_packet_count", 0)
         self.rsi_ip_address_ = (
             self.get_parameter("rsi_ip_address").get_parameter_value().string_value
         )
@@ -463,6 +469,9 @@ class RSISimulator(Node):
         )
         self.repeated_ipoc_remaining_ = (
             self.get_parameter("fault_repeated_ipoc_count").get_parameter_value().integer_value
+        )
+        self.malformed_packet_remaining_ = (
+            self.get_parameter("fault_malformed_packet_count").get_parameter_value().integer_value
         )
         self.add_on_set_parameters_callback(self._on_fault_parameter_set)
         self.rsi_xml_config_ = _load_rsi_xml_config(rsi_xml_config_file)
@@ -485,6 +494,7 @@ class RSISimulator(Node):
                 "fault_late_packet_cycles",
                 "fault_dropped_packet_count",
                 "fault_repeated_ipoc_count",
+                "fault_malformed_packet_count",
             ):
                 if param.value < 0:
                     return SetParametersResult(
@@ -497,6 +507,8 @@ class RSISimulator(Node):
                 self.dropped_packet_remaining_ = param.value
             elif param.name == "fault_repeated_ipoc_count":
                 self.repeated_ipoc_remaining_ = param.value
+            elif param.name == "fault_malformed_packet_count":
+                self.malformed_packet_remaining_ = param.value
         return SetParametersResult(successful=True)
 
     def timer_callback(self):
@@ -525,7 +537,13 @@ class RSISimulator(Node):
                 send_ipoc,
                 self.rsi_xml_config_,
             )
-            self.rsi_act_pub_.publish(String(data=msg.decode("utf-8")))
+            if self.malformed_packet_remaining_ > 0:
+                self.malformed_packet_remaining_ -= 1
+                # Not published: state subscribers parse every message they get.
+                msg = MALFORMED_RSI_PACKET
+                self.get_logger().warning(f"Malformed packet injected: {msg.decode('utf-8')}")
+            else:
+                self.rsi_act_pub_.publish(String(data=msg.decode("utf-8")))
             self.socket_.sendto(msg, (self.rsi_ip_address_, self.rsi_port_address_))
             deadline = time.monotonic() + self.cycle_time
             stale = 0

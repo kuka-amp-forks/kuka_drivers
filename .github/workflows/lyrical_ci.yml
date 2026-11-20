@@ -25,7 +25,7 @@ env:
   ROS_APT_SNAPSHOT_DATE: "2026-09-18"
   UBUNTU_CODENAME: resolute
   SDK_REPO: https://github.com/kuka-amp-forks/kuka_external_control_sdk.git
-  SDK_REF: 39e34a88c1f08bf153bcce420f11e3a2b9c99a89
+  SDK_REF: 2daaed279432b1f80a3f7eaf31b234704cc33a34
   DESC_REPO: https://github.com/kuka-amp-forks/kuka_robot_descriptions.git
   DESC_REF: d8b41feab96dad453b188a4d192ab95736d473eb
   RMW_IMPLEMENTATION: rmw_zenoh_cpp

@@ -40,8 +40,6 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
 
   interface_data_.position_states.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-  interface_data_.prev_position_states.resize(
-    info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.velocity_states.resize(
     info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
   interface_data_.torque_states.resize(
@@ -107,9 +105,8 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     RCLCPP_INFO(
       logger_,
       "motion_state.joints.velocities is not configured in RSI XML. Velocity state values will be "
-      "derived by differentiating the measured joint positions over the RSI cycle time, not "
-      "measured by the robot. RSI position is quantised, so filter before using them for anything "
-      "tighter than a brake ramp.");
+      "derived from the measured joint positions over the IPOC interval between packets and "
+      "smoothed by the velocity_filter_cutoff_hz low-pass, not measured by the robot.");
   }
 
   if (!optional_interface_flags_.has_torque_state_interface)
@@ -192,7 +189,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::on_init(
     interface_prefix_ = it->second;
   }
 
-  if (!ReadTimeoutParameters() || !ReadFaultInjectionParameter())
+  if (!ReadTimeoutParameters() || !ReadFaultInjectionParameter() || !ReadPacketParameters())
   {
     return CallbackReturn::ERROR;
   }
@@ -669,10 +666,31 @@ bool KukaRSIHardwareInterfaceBase::SetupRobot(
 
 void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
 {
-  auto motion_state_status =
-    robot_ptr_->ReceiveMotionState(std::chrono::milliseconds(request_timeout));
+  kuka::external::control::Status motion_state_status;
+  try
+  {
+    motion_state_status =
+      robot_ptr_->ReceiveMotionState(std::chrono::milliseconds(request_timeout));
+  }
+  catch (const std::exception & e)
+  {
+    const auto xml = robot_ptr_->GetLastReceivedXml();
+    RCLCPP_ERROR(
+      logger_, "Parsing the RSI packet failed (%s), %zu bytes: %.*s", e.what(), xml.size(),
+      static_cast<int>(xml.size()), xml.data());
+    runtime_state_.msg_received = false;
+    return;
+  }
   runtime_state_.msg_received =
     motion_state_status.return_code == kuka::external::control::ReturnCode::OK;
+  if (runtime_state_.msg_received && !diagnostics_state_.first_packet_logged)
+  {
+    const auto xml = robot_ptr_->GetLastReceivedXml();
+    RCLCPP_INFO(
+      logger_, "First RSI packet after the start request (%zu bytes): %.*s", xml.size(),
+      static_cast<int>(xml.size()), xml.data());
+    diagnostics_state_.first_packet_logged = true;
+  }
   if (runtime_state_.msg_received)
   {
     runtime_state_.packet_unanswered = true;
@@ -712,7 +730,9 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
     }
     else
     {
-      DeriveVelocityStates();
+      // RSI has no axis-velocity send object on most controllers, so velocity is derived.
+      velocity_estimator_.Update(
+        interface_data_.position_states, robot_ptr_->getIpoc(), interface_data_.velocity_states);
     }
     if (optional_interface_flags_.has_torque_state_interface)
     {
@@ -744,6 +764,7 @@ void KukaRSIHardwareInterfaceBase::Read(const int64_t request_timeout)
         diagnostics_state_.packet_loss_count, robot_ptr_->getDelay());
     }
 
+    DetectRepeatedIpoc(robot_ptr_->getIpoc());
     diagnostics_state_.last_ipoc = robot_ptr_->getIpoc();
   }
   else
@@ -795,30 +816,6 @@ void KukaRSIHardwareInterfaceBase::CopyGPIOStatesToCommands()
         interface_data_.gpio_states[runtime_state_.gpio_states_to_commands_map[i]];
     }
   }
-}
-
-// RSI has no built-in axis-velocity send object, so on most controllers nothing
-// can be mapped to motion_state.joints.velocities and the state would otherwise
-// stay NaN for the life of the process -- claimable by a controller but never
-// written, which is worse than absent. Differentiating the positions we already
-// receive is exact in time: the KRC owns the clock and the cycle time is fixed,
-// so dt is the nominal cycle rather than a jittery host-side measurement.
-void KukaRSIHardwareInterfaceBase::DeriveVelocityStates()
-{
-  const double dt = RSI_CYCLE_TIME_MS / 1000.0;
-
-  for (size_t i = 0; i < interface_data_.velocity_states.size(); i++)
-  {
-    const double prev = interface_data_.prev_position_states[i];
-    // First cycle after activation: no usable previous sample, so report
-    // standstill rather than a step-sized spike.
-    interface_data_.velocity_states[i] =
-      std::isfinite(prev) ? (interface_data_.position_states[i] - prev) / dt : 0.0;
-  }
-
-  std::copy(
-    interface_data_.position_states.cbegin(), interface_data_.position_states.cend(),
-    interface_data_.prev_position_states.begin());
 }
 
 kuka::external::control::kss::GPIOConfiguration KukaRSIHardwareInterfaceBase::ParseGPIOConfig(
@@ -1072,9 +1069,26 @@ bool KukaRSIHardwareInterfaceBase::DiscardQueuedPackets()
   const std::vector<double> zeros(info_.joints.size(), 0.0);
   uint64_t discarded = 0;
   uint64_t first_ipoc = 0;
-  while (discarded < MAX_DISCARDED_PACKETS &&
-         robot_ptr_->ReceiveMotionState(DISCARD_RECEIVE_TIMEOUT).return_code == ReturnCode::OK)
+  while (discarded < MAX_DISCARDED_PACKETS)
   {
+    kuka::external::control::Status motion_state_status;
+    try
+    {
+      motion_state_status = robot_ptr_->ReceiveMotionState(DISCARD_RECEIVE_TIMEOUT);
+    }
+    catch (const std::exception & e)
+    {
+      const auto xml = robot_ptr_->GetLastReceivedXml();
+      RCLCPP_ERROR(
+        logger_, "Activation failed: parsing a queued RSI packet failed (%s), %zu bytes: %.*s",
+        e.what(), xml.size(), static_cast<int>(xml.size()), xml.data());
+      robot_ptr_->ResetControlSignal();
+      return false;
+    }
+    if (motion_state_status.return_code != ReturnCode::OK)
+    {
+      break;
+    }
     if (discarded++ == 0)
     {
       first_ipoc = robot_ptr_->getIpoc();
@@ -1124,6 +1138,16 @@ bool KukaRSIHardwareInterfaceBase::DiscardQueuedPackets()
 CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_lifecycle::State &)
 {
   using kuka::external::control::ReturnCode;
+
+  // A repeat silences the controller, so the next activation's ResetDiagnostics() would clear
+  // the count with no new IPOC ever arriving to log it first.
+  if (diagnostics_state_.repeated_ipoc_count > 0)
+  {
+    RCLCPP_WARN(
+      logger_, "IPOC %lu repeated %lu time(s)", diagnostics_state_.last_ipoc,
+      diagnostics_state_.repeated_ipoc_count);
+    diagnostics_state_.repeated_ipoc_count = 0;
+  }
 
   // Before the stop packet, so the stop event it causes is not latched as a fault.
   runtime_state_.is_active.store(false, std::memory_order_release);
@@ -1177,6 +1201,14 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
   runtime_state_.packet_unanswered = false;
 
   RequestStop();
+  if (!packet_to_answer)
+  {
+    // As the stop packet's path does, so no packet of this run waits for the next activation.
+    if (const auto reset = robot_ptr_->ResetEndpoint(); reset.return_code != ReturnCode::OK)
+    {
+      RCLCPP_WARN(logger_, "Resetting the RSI endpoint failed: %s", reset.message);
+    }
+  }
 
   const double after_stop_ms =
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - stop_time).count();
@@ -1185,7 +1217,7 @@ CallbackReturn KukaRSIHardwareInterfaceBase::extended_deactivation(const rclcpp_
     const uint64_t stop_ipoc = robot_ptr_->getIpoc();
     RCLCPP_INFO(
       logger_,
-      "Deactivation requests issued: stop packet replied to IPOC %lu (%lu RSI cycle(s) after the "
+      "Deactivation requests issued: stop packet replied to IPOC %lu (%lu ms of IPOC after the "
       "last read), cancel and drives-off requested %.3f ms after it",
       stop_ipoc, stop_ipoc - entry_ipoc, after_stop_ms);
   }
@@ -1317,6 +1349,14 @@ bool KukaRSIHardwareInterfaceBase::Write()
     return false;
   }
   runtime_state_.packet_unanswered = false;
+  if (!diagnostics_state_.first_command_logged)
+  {
+    const auto xml = robot_ptr_->GetLastSentXml();
+    RCLCPP_INFO(
+      logger_, "First RSI command (%zu bytes): %.*s", xml.size(), static_cast<int>(xml.size()),
+      xml.data());
+    diagnostics_state_.first_command_logged = true;
+  }
   return true;
 }
 
@@ -1325,15 +1365,13 @@ void KukaRSIHardwareInterfaceBase::ResetDiagnostics()
   // Reset diagnostics related variables
   diagnostics_state_.packet_loss_count = 0;
   diagnostics_state_.last_ipoc = 0;
+  diagnostics_state_.repeated_ipoc_count = 0;
+  diagnostics_state_.first_packet_logged = false;
+  diagnostics_state_.first_command_logged = false;
   diagnostics_state_.last_msg_received_time = std::chrono::steady_clock::time_point{};
 
-  // Also drop the previous position sample. The arm can move while external
-  // control is off -- by jog, or by the KRL program after a fault -- so a sample
-  // carried across an activation boundary would differentiate into a spike on the
-  // first cycle. This is the only hook both activation paths share.
-  std::fill(
-    interface_data_.prev_position_states.begin(), interface_data_.prev_position_states.end(),
-    std::numeric_limits<double>::quiet_NaN());
+  // The arm can move while external control is off, so no sample is differentiated across it.
+  velocity_estimator_.Reset();
 }
 
 bool KukaRSIHardwareInterfaceBase::LoadXmlConfig(
@@ -1384,6 +1422,89 @@ bool KukaRSIHardwareInterfaceBase::ReadTimeoutParameters()
          ReadTimeoutParameter("read_timeout_ms", DEFAULT_READ_TIMEOUT, read_timeout_) &&
          ReadTimeoutParameter(
            "first_status_timeout_ms", DEFAULT_FIRST_STATUS_TIMEOUT, first_status_timeout_);
+}
+
+// The reply to a repeated IPOC repeats the last commanded position, which the KRC reads as a
+// request to stop.
+void KukaRSIHardwareInterfaceBase::DetectRepeatedIpoc(uint64_t ipoc)
+{
+  if (!detect_repeated_ipoc_)
+  {
+    return;
+  }
+  auto & diagnostics = diagnostics_state_;
+  if (diagnostics.last_ipoc != 0 && ipoc == diagnostics.last_ipoc)
+  {
+    if (diagnostics.repeated_ipoc_count++ == 0)
+    {
+      RCLCPP_WARN(logger_, "Repeated IPOC %lu: the controller sent the same cycle again", ipoc);
+    }
+    return;
+  }
+  if (diagnostics.repeated_ipoc_count > 0)
+  {
+    RCLCPP_WARN(
+      logger_, "IPOC %lu repeated %lu time(s)", diagnostics.last_ipoc,
+      diagnostics.repeated_ipoc_count);
+    diagnostics.repeated_ipoc_count = 0;
+  }
+}
+
+bool KukaRSIHardwareInterfaceBase::ReadPacketParameters()
+{
+  double cutoff_hz = DEFAULT_VELOCITY_FILTER_CUTOFF_HZ;
+  const auto it = info_.hardware_parameters.find("velocity_filter_cutoff_hz");
+  if (it != info_.hardware_parameters.end())
+  {
+    try
+    {
+      size_t used = 0;
+      cutoff_hz = std::stod(it->second, &used);
+      if (used != it->second.size() || !std::isfinite(cutoff_hz) || cutoff_hz < 0.0)
+      {
+        throw std::invalid_argument(it->second);
+      }
+    }
+    catch (const std::exception &)
+    {
+      RCLCPP_ERROR(
+        logger_, "velocity_filter_cutoff_hz must be a non-negative number, got '%s'",
+        it->second.c_str());
+      return false;
+    }
+    const double nyquist_hz = 0.5 / (RSI_CYCLE_TIME_MS / 1000.0);
+    if (cutoff_hz >= nyquist_hz)
+    {
+      RCLCPP_ERROR(
+        logger_,
+        "velocity_filter_cutoff_hz (%.1f Hz) must be below the Nyquist frequency (%.1f Hz) at "
+        "the %.0f ms RSI cycle time",
+        cutoff_hz, nyquist_hz, RSI_CYCLE_TIME_MS);
+      return false;
+    }
+  }
+  velocity_estimator_.Configure(info_.joints.size(), cutoff_hz, RSI_CYCLE_TIME_MS / 1000.0);
+
+  const auto detect = info_.hardware_parameters.find("detect_repeated_ipoc");
+  if (detect != info_.hardware_parameters.end())
+  {
+    if (detect->second == "true" || detect->second == "True")
+    {
+      detect_repeated_ipoc_ = true;
+    }
+    else if (detect->second == "false" || detect->second == "False")
+    {
+      detect_repeated_ipoc_ = false;
+    }
+    else
+    {
+      RCLCPP_ERROR(
+        logger_, "detect_repeated_ipoc must be true or false, got '%s'", detect->second.c_str());
+      return false;
+    }
+  }
+  RCLCPP_INFO(logger_, "Derived joint velocity low-pass cutoff: %.1f Hz (0 is off)", cutoff_hz);
+  return true;
 }
 
 bool KukaRSIHardwareInterfaceBase::ReadFaultInjectionParameter()

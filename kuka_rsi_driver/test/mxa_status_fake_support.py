@@ -50,7 +50,7 @@ FAKE_PLUGIN = (
 # What on_deactivate logs once its requests are out.
 DEACTIVATION_LINE = re.compile(
     r"Deactivation requests issued: stop packet replied to IPOC (\d+) "
-    r"\((\d+) RSI cycle\(s\) after the last read\), "
+    r"\((\d+) ms of IPOC after the last read\), "
     r"cancel and drives-off requested ([0-9.]+) ms after it"
 )
 STOP_COMPLETE_LINE = "Stop complete: RSI program cancelled and drives off"
@@ -289,6 +289,7 @@ class MxaStatusFakeTestCase(JointMoveTestCase):
         self.assertEqual(self.component_state(), State.PRIMARY_STATE_INACTIVE)
         match = log.wait_for_match(DEACTIVATION_LINE, timeout=5)
         self.assertIsNotNone(match, "no deactivation timing line in the driver log")
+        # The simulator's IPOC advances by one per packet, not by the KRC's milliseconds.
         cycles = int(match.group(2))
         self.assertLessEqual(cycles, 1, f"stop packet sent {cycles} cycles after the last read")
 
