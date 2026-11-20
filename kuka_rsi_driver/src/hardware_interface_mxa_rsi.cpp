@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <pthread.h>
+#include <sched.h>
+
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <regex>
 #include <thread>
 #include <vector>
@@ -90,6 +94,7 @@ CallbackReturn KukaMxaRsiHardwareInterface::on_configure(const rclcpp_lifecycle:
   mxa_config.mxa_client_port = std::stoi(info_.hardware_parameters.at("mxa_client_port"));
 
   mxa_loss_exported_ = false;
+  mxa_thread_unscheduled_ = true;
   control_state_.status_manager.Invalidate();
   {
     std::lock_guard<std::mutex> lk{init_mtx_};
@@ -183,22 +188,70 @@ std::chrono::milliseconds KukaMxaRsiHardwareInterface::MxaSilence() const
   return age();
 }
 
+// Fails soft like the control loop's own settings: logs and keeps the default when not permitted.
+void KukaMxaRsiHardwareInterface::CopyLoopScheduling()
+{
+  const auto thread = robot_ptr_->StatusThreadNativeHandle();
+  if (!thread)
+  {
+    return;
+  }
+
+  cpu_set_t cpus;
+  int err = pthread_getaffinity_np(pthread_self(), sizeof(cpus), &cpus);
+  if (err == 0)
+  {
+    err = pthread_setaffinity_np(*thread, sizeof(cpus), &cpus);
+  }
+  if (err != 0)
+  {
+    RCLCPP_WARN(logger_, "mxA thread keeps its CPU affinity: %s", std::strerror(err));
+  }
+
+  int policy = SCHED_OTHER;
+  sched_param param{};
+  if (pthread_getschedparam(pthread_self(), &policy, &param) != 0 || policy != SCHED_FIFO)
+  {
+    RCLCPP_WARN(
+      logger_, "Control loop is not SCHED_FIFO, the mxA thread keeps the default scheduling");
+    return;
+  }
+  const int loop_priority = param.sched_priority;
+  param.sched_priority = std::max(loop_priority - 1, sched_get_priority_min(SCHED_FIFO));
+  err = pthread_setschedparam(*thread, SCHED_FIFO, &param);
+  if (err != 0)
+  {
+    RCLCPP_WARN(
+      logger_, "mxA thread keeps the default scheduling, SCHED_FIFO %d not set: %s",
+      param.sched_priority, std::strerror(err));
+    return;
+  }
+  RCLCPP_INFO(
+    logger_, "mxA thread runs SCHED_FIFO at priority %d, the control loop at %d",
+    param.sched_priority, loop_priority);
+}
+
 return_type KukaMxaRsiHardwareInterface::read(
   const rclcpp::Time & time, const rclcpp::Duration & duration)
 {
+  if (mxa_loss_exported_)
+  {
+    return return_type::ERROR;
+  }
+  if (mxa_thread_unscheduled_)
+  {
+    mxa_thread_unscheduled_ = false;
+    CopyLoopScheduling();
+  }
+
   const auto age = MxaSilence();
   if (age > mxa_status_timeout_)
   {
-    if (LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST))
-    {
-      RCLCPP_ERROR(
-        logger_, "Stopping: no mxA telegram within %ld ms, the newest is %ld ms old",
-        static_cast<int64_t>(mxa_status_timeout_.count()), static_cast<int64_t>(age.count()));
-    }
-    if (mxa_loss_exported_)
-    {
-      return return_type::ERROR;
-    }
+    // Logged for every loss, also when an earlier one still holds stop_reason.
+    LatchStopReason(kuka_drivers_core::StopReason::MXA_CONNECTION_LOST);
+    RCLCPP_ERROR(
+      logger_, "Stopping: no mxA telegram within %ld ms, the newest is %ld ms old",
+      static_cast<int64_t>(mxa_status_timeout_.count()), static_cast<int64_t>(age.count()));
     // Export the error for one cycle so the event broadcaster publishes it before ERROR.
     mxa_loss_exported_ = true;
     set_server_event(kuka_drivers_core::HardwareEvent::ERROR);

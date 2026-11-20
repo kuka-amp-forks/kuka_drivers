@@ -98,6 +98,9 @@ private:
   // The newest mxA telegram's age once past the bound with none still queued, otherwise zero.
   KUKA_RSI_DRIVER_LOCAL std::chrono::milliseconds MxaSilence() const;
 
+  // Gives the mxA thread the calling loop thread's affinity and SCHED_FIFO one below it.
+  KUKA_RSI_DRIVER_LOCAL void CopyLoopScheduling();
+
   // Bound on the age of the newest mxA telegram, below the SDK's own 100 ms receive timeout.
   static constexpr std::chrono::milliseconds DEFAULT_MXA_STATUS_TIMEOUT{60};
   // Mirrors kuka::external::control::kss::mxa::Client::kUDPTimeoutMs (client.h); keep in sync.
@@ -111,6 +114,8 @@ private:
   static constexpr std::chrono::milliseconds DRIVES_ON_SETTLE{100};
   // Set once read() has exported an mxA loss as server_state; the next write() or read() errors.
   bool mxa_loss_exported_ = false;
+  // Set by on_configure: the next read() copies the loop's scheduling to the new mxA thread.
+  bool mxa_thread_unscheduled_ = false;
   // E-stop and guard stop of the last telegram, mxA thread only. Telegrams come only on a change,
   // so a flag still set is delivered again with every unrelated one; kept across a reconfigure
   // for the same reason.
