@@ -165,6 +165,10 @@ protected:
     return control_state_.status_manager.DrivesPowered();
   }
 
+  // Releases robot_ptr_; every teardown path (on_cleanup, on_error, the destructor) calls this
+  // instead of resetting it directly, so a subclass override runs on all of them uniformly.
+  virtual KUKA_RSI_DRIVER_PUBLIC void ReleaseRobot() { robot_ptr_.reset(); }
+
   // False when the send failed; the caller decides whether that stops the component.
   KUKA_RSI_DRIVER_LOCAL bool Write();
 
@@ -273,9 +277,8 @@ protected:
   {
     double server_state =
       static_cast<double>(kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED);
-    kuka_drivers_core::HardwareEvent last_event =
-      kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED;
-    std::mutex event_mutex;
+    std::atomic<kuka_drivers_core::HardwareEvent> last_event{
+      kuka_drivers_core::HardwareEvent::HARDWARE_EVENT_UNSPECIFIED};
     // The cause logged at the stop; held through INACTIVE, reset by a successful activation.
     std::atomic<kuka_drivers_core::StopReason> stop_reason{kuka_drivers_core::StopReason::NONE};
     // The KRC's stop message, set from the SDK's error event; the SDK reports no release, so it
